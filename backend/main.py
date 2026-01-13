@@ -70,8 +70,14 @@ async def analyze_stream(bucket_url: str) -> AsyncGenerator[str, None]:
         yield stream_progress("Listing shard files...") + "\n"
         blobs = list(bucket.list_blobs(prefix=prefix))
 
-        # Filter to only include files (not directories) with .ndjson or .json extension
-        shard_blobs = [b for b in blobs if b.name.endswith(('.ndjson', '.json')) and b.size > 0]
+        # Filter to only include data files (not directories)
+        # Accept .ndjson, .json, or any file with 'ndjson' or 'json' in the name
+        shard_blobs = [b for b in blobs if b.size > 0 and (
+            b.name.endswith(('.ndjson', '.json')) or
+            'ndjson' in b.name.lower() or
+            'json' in b.name.lower() or
+            b.content_type in ('application/json', 'application/x-ndjson', 'text/plain')
+        )]
         shard_blobs.sort(key=lambda b: b.name)  # Sort for consistent ordering
 
         if not shard_blobs:
