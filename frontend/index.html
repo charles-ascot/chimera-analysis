@@ -544,6 +544,9 @@
             setStatus('idle');
         }
 
+        let currentJobId = null;
+        let pollInterval = null;
+
         async function startAnalysis() {
             const bucketUrl = document.getElementById('bucket-url').value.trim();
 
@@ -552,14 +555,19 @@
                 return;
             }
 
-            // Clear previous results
+            // Clear previous results and stop any existing poll
             resultsSection.style.display = 'none';
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
 
             setStatus('running');
             setButtonLoading(true);
-            appendToConsole(`Starting analysis for: ${bucketUrl}`);
+            appendToConsole(`Submitting analysis job for: ${bucketUrl}`);
 
             try {
+                // Submit the job
                 const response = await fetch(`${API_URL}/analyze`, {
                     method: 'POST',
                     headers: {
@@ -572,46 +580,87 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
+                const data = await response.json();
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                if (data.type === 'error') {
+                    appendToConsole(data.message, 'error');
+                    setStatus('error');
+                    setButtonLoading(false);
+                    return;
+                }
 
-                    const text = decoder.decode(value);
-                    const lines = text.split('\n').filter(line => line.trim());
+                if (data.type === 'submitted') {
+                    currentJobId = data.job_id;
+                    appendToConsole(`Job submitted: ${data.job_id}`, 'success');
+                    appendToConsole(`Batch job: ${data.batch_job_id}`, 'info');
+                    appendToConsole('Processing with Cloud Batch (64GB RAM, 8 vCPU)...', 'info');
+                    appendToConsole('This may take several minutes for large datasets.', 'info');
 
-                    for (const line of lines) {
-                        try {
-                            const data = JSON.parse(line);
-
-                            if (data.type === 'progress') {
-                                appendToConsole(data.message, 'info');
-                                if (data.progress !== undefined) {
-                                    updateProgress(data.progress);
-                                }
-                            } else if (data.type === 'error') {
-                                appendToConsole(data.message, 'error');
-                                setStatus('error');
-                            } else if (data.type === 'result') {
-                                appendToConsole('Analysis complete! Rendering results...', 'success');
-                                displayResults(data.data);
-                                setStatus('complete');
-                            }
-                        } catch (e) {
-                            if (line.trim()) {
-                                appendToConsole(line, 'info');
-                            }
-                        }
-                    }
+                    // Start polling for status
+                    updateProgress(10);
+                    startPolling(data.job_id);
                 }
             } catch (error) {
                 appendToConsole(`Error: ${error.message}`, 'error');
                 setStatus('error');
-            } finally {
                 setButtonLoading(false);
             }
+        }
+
+        function startPolling(jobId) {
+            let pollCount = 0;
+            const maxPolls = 360; // 30 minutes at 5 second intervals
+
+            pollInterval = setInterval(async () => {
+                pollCount++;
+
+                if (pollCount > maxPolls) {
+                    clearInterval(pollInterval);
+                    appendToConsole('Job timed out after 30 minutes', 'error');
+                    setStatus('error');
+                    setButtonLoading(false);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${API_URL}/status/${jobId}`);
+                    const data = await response.json();
+
+                    if (data.status === 'complete') {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        updateProgress(100);
+                        appendToConsole('Analysis complete! Rendering results...', 'success');
+                        displayResults(data.result);
+                        setStatus('complete');
+                        setButtonLoading(false);
+                    } else if (data.status === 'failed' || data.status === 'error') {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        appendToConsole(`Job failed: ${data.message || 'Unknown error'}`, 'error');
+                        setStatus('error');
+                        setButtonLoading(false);
+                    } else if (data.status === 'running') {
+                        // Update progress animation (indeterminate)
+                        const fakeProgress = Math.min(10 + pollCount * 2, 90);
+                        updateProgress(fakeProgress);
+
+                        // Log occasionally
+                        if (pollCount % 12 === 0) { // Every minute
+                            appendToConsole(`Still processing... (${Math.floor(pollCount * 5 / 60)} min elapsed)`, 'info');
+                        }
+                    } else if (data.status === 'unknown') {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        appendToConsole('Job not found', 'error');
+                        setStatus('error');
+                        setButtonLoading(false);
+                    }
+                } catch (error) {
+                    // Don't stop polling on network errors, just log
+                    console.error('Poll error:', error);
+                }
+            }, 5000); // Poll every 5 seconds
         }
 
         function displayResults(results) {

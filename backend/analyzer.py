@@ -1,19 +1,123 @@
 """
 Analysis logic for NDJSON data
 Processes records to understand heterogeneity patterns
+
+This module is pure compute - no HTTP/streaming dependencies.
+Used by both Cloud Run (directly) and Cloud Batch (via worker.py).
 """
 
 import json
+import re
 from collections import defaultdict
-from typing import Generator
+from typing import Optional
 import pandas as pd
+from google.cloud import storage
 
 
-def analyze_records(records: list) -> dict:
+def load_records_from_gcs(bucket_url: str) -> list:
     """
-    Run complete analysis on loaded records.
-    Returns a dictionary with all analysis results.
+    Load all NDJSON records from a GCS bucket path.
+
+    Args:
+        bucket_url: GCS path (e.g., gs://bucket-name/prefix/)
+
+    Returns:
+        List of parsed JSON records
     """
+    # Parse GCS URL
+    bucket_name, prefix = parse_gcs_url(bucket_url)
+
+    print(f"Connecting to GCS bucket: {bucket_name}, prefix: {prefix}")
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+
+    # List all blobs
+    blobs = list(bucket.list_blobs(prefix=prefix))
+
+    # Filter to data files
+    shard_pattern = re.compile(r'-\d{5}-of-\d{5}$')
+    shard_blobs = [b for b in blobs if b.size > 0 and (
+        b.name.endswith(('.ndjson', '.json')) or
+        '.ndjson' in b.name.lower() or
+        '.json' in b.name.lower() or
+        shard_pattern.search(b.name) or
+        b.content_type in ('application/json', 'application/x-ndjson', 'text/plain')
+    )]
+    shard_blobs.sort(key=lambda b: b.name)
+
+    if not shard_blobs:
+        raise ValueError(f"No NDJSON files found at {bucket_url}")
+
+    print(f"Found {len(shard_blobs)} shard files")
+
+    # Load all records
+    records = []
+    total_size = sum(b.size for b in shard_blobs)
+    loaded_size = 0
+
+    for i, blob in enumerate(shard_blobs):
+        print(f"Loading shard {i+1}/{len(shard_blobs)}: {blob.name.split('/')[-1]}")
+
+        content = blob.download_as_text()
+        lines = content.strip().split('\n')
+
+        for line in lines:
+            if line.strip():
+                try:
+                    record = json.loads(line)
+                    records.append(record)
+                except json.JSONDecodeError:
+                    continue
+
+        loaded_size += blob.size
+        progress = int((loaded_size / total_size) * 100)
+        print(f"Progress: {progress}% - Loaded {len(records):,} records")
+
+    print(f"Total records loaded: {len(records):,}")
+    return records
+
+
+def parse_gcs_url(url: str) -> tuple:
+    """
+    Parse GCS URL into bucket name and prefix.
+
+    Supports formats:
+    - gs://bucket-name/path/to/files/
+    - https://storage.googleapis.com/bucket-name/path/to/files/
+    """
+    # gs:// format
+    gs_match = re.match(r'gs://([^/]+)/?(.*)', url)
+    if gs_match:
+        return gs_match.group(1), gs_match.group(2).rstrip('/')
+
+    # HTTPS format
+    https_match = re.match(r'https://storage\.(?:googleapis|cloud\.google)\.com/([^/]+)/?(.*)', url)
+    if https_match:
+        return https_match.group(1), https_match.group(2).rstrip('/')
+
+    raise ValueError(f"Invalid GCS URL format: {url}")
+
+
+def analyze_records(bucket_url: str = None, records: list = None) -> dict:
+    """
+    Run complete analysis on NDJSON records.
+
+    Can load from GCS (bucket_url) or use pre-loaded records.
+
+    Args:
+        bucket_url: GCS path to load data from
+        records: Pre-loaded list of records (if bucket_url not provided)
+
+    Returns:
+        Dictionary with all analysis results
+    """
+    # Load records if bucket_url provided
+    if bucket_url and not records:
+        records = load_records_from_gcs(bucket_url)
+    elif not records:
+        records = []
+
     results = {
         "total_records": len(records),
         "field_presence": [],
@@ -31,12 +135,16 @@ def analyze_records(records: list) -> dict:
     if not records:
         return results
 
+    print("Building DataFrame...")
+
     # Build DataFrame
     df = pd.DataFrame(records)
 
     # ========================================================================
     # FIELD PRESENCE ANALYSIS
     # ========================================================================
+    print("Analyzing field presence...")
+
     field_presence = {}
     for col in df.columns:
         null_count = int(df[col].isnull().sum())
@@ -54,6 +162,8 @@ def analyze_records(records: list) -> dict:
     # ========================================================================
     # TEMPORAL ANALYSIS
     # ========================================================================
+    print("Analyzing temporal patterns...")
+
     metadata_by_timestamp = defaultdict(list)
 
     for record in records:
@@ -95,6 +205,7 @@ def analyze_records(records: list) -> dict:
     # ========================================================================
     # EXAMPLE RECORDS
     # ========================================================================
+    print("Finding example records...")
 
     # Example 1: Record with all metadata
     for record in records:
@@ -126,6 +237,7 @@ def analyze_records(records: list) -> dict:
     # ========================================================================
     # FIELD VALUE DISTRIBUTIONS
     # ========================================================================
+    print("Computing distributions...")
 
     # Market type distribution
     if 'market_type' in df.columns:
@@ -144,6 +256,8 @@ def analyze_records(records: list) -> dict:
         ]
 
     # Numeric field statistics
+    print("Computing numeric statistics...")
+
     numeric_fields = ['ltp', 'back_price', 'lay_price', 'back_volume', 'lay_volume', 'total_matched_volume']
     for field in numeric_fields:
         if field in df.columns:
@@ -162,6 +276,7 @@ def analyze_records(records: list) -> dict:
     # ========================================================================
     # SCHEMA RECOMMENDATIONS
     # ========================================================================
+    print("Generating schema recommendations...")
 
     for field_data in sorted_fields:
         field = field_data["field"]
@@ -174,9 +289,11 @@ def analyze_records(records: list) -> dict:
         elif pct < 50:
             results["recommendations"]["sparse"].append({"field": field, "pct": pct})
 
+    print("Analysis complete!")
     return results
 
 
+# Legacy streaming helpers (still used by main.py for progress updates)
 def stream_progress(message: str, progress: int = None) -> str:
     """Format a progress message for streaming."""
     data = {"type": "progress", "message": message}

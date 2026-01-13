@@ -1,18 +1,16 @@
 """
 FastAPI backend for NDJSON Analysis Console
-Fetches sharded data from GCS, concatenates, and analyzes
+Lightweight job dispatcher - heavy work goes to Cloud Batch
 """
 
 import json
-import re
-from typing import AsyncGenerator
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from google.cloud import storage
 
-from analyzer import analyze_records, stream_progress, stream_result, stream_error
+from batch_launcher import submit_batch_job, get_job_status
 
 app = FastAPI(title="NDJSON Analysis API")
 
@@ -25,118 +23,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GCS buckets for job coordination
+MANIFESTS_BUCKET = "betfair-chimera-manifests"
+RESULTS_BUCKET = "betfair-chimera-results"
+
 
 class AnalyzeRequest(BaseModel):
     bucket_url: str
-
-
-def parse_gcs_url(url: str) -> tuple[str, str]:
-    """
-    Parse GCS URL into bucket name and prefix.
-    Supports formats:
-    - gs://bucket-name/path/to/files/
-    - https://storage.googleapis.com/bucket-name/path/to/files/
-    - https://storage.cloud.google.com/bucket-name/path/to/files/
-    """
-    # gs:// format
-    gs_match = re.match(r'gs://([^/]+)/?(.*)', url)
-    if gs_match:
-        return gs_match.group(1), gs_match.group(2).rstrip('/')
-
-    # HTTPS format
-    https_match = re.match(r'https://storage\.(?:googleapis|cloud\.google)\.com/([^/]+)/?(.*)', url)
-    if https_match:
-        return https_match.group(1), https_match.group(2).rstrip('/')
-
-    raise ValueError(f"Invalid GCS URL format: {url}")
-
-
-async def analyze_stream(bucket_url: str) -> AsyncGenerator[str, None]:
-    """
-    Stream analysis progress and results.
-    """
-    try:
-        yield stream_progress("Parsing GCS URL...") + "\n"
-
-        bucket_name, prefix = parse_gcs_url(bucket_url)
-        yield stream_progress(f"Bucket: {bucket_name}, Prefix: {prefix}") + "\n"
-
-        # Initialize GCS client
-        yield stream_progress("Connecting to Google Cloud Storage...") + "\n"
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-
-        # List all blobs with the prefix
-        yield stream_progress("Listing shard files...") + "\n"
-        blobs = list(bucket.list_blobs(prefix=prefix))
-
-        # Filter to only include data files (not directories)
-        # Accept various naming patterns:
-        # - .ndjson, .json extensions
-        # - 'ndjson' or 'json' anywhere in filename (e.g., file.ndjson-00000-of-00010)
-        # - sharded files with -XXXXX-of-XXXXX pattern
-        # - text/plain content type
-        import re
-        shard_pattern = re.compile(r'-\d{5}-of-\d{5}$')
-        shard_blobs = [b for b in blobs if b.size > 0 and (
-            b.name.endswith(('.ndjson', '.json')) or
-            '.ndjson' in b.name.lower() or
-            '.json' in b.name.lower() or
-            shard_pattern.search(b.name) or
-            b.content_type in ('application/json', 'application/x-ndjson', 'text/plain')
-        )]
-        shard_blobs.sort(key=lambda b: b.name)  # Sort for consistent ordering
-
-        if not shard_blobs:
-            yield stream_error(f"No NDJSON files found at {bucket_url}") + "\n"
-            return
-
-        yield stream_progress(f"Found {len(shard_blobs)} shard files") + "\n"
-
-        # Show file names
-        for i, blob in enumerate(shard_blobs[:5]):
-            yield stream_progress(f"  - {blob.name} ({blob.size / 1024 / 1024:.1f} MB)") + "\n"
-        if len(shard_blobs) > 5:
-            yield stream_progress(f"  ... and {len(shard_blobs) - 5} more files") + "\n"
-
-        # Load and concatenate all shards
-        yield stream_progress("Loading and concatenating shards...", 0) + "\n"
-
-        records = []
-        total_size = sum(b.size for b in shard_blobs)
-        loaded_size = 0
-
-        for i, blob in enumerate(shard_blobs):
-            yield stream_progress(f"Loading shard {i+1}/{len(shard_blobs)}: {blob.name.split('/')[-1]}") + "\n"
-
-            content = blob.download_as_text()
-            lines = content.strip().split('\n')
-
-            for line in lines:
-                if line.strip():
-                    try:
-                        record = json.loads(line)
-                        records.append(record)
-                    except json.JSONDecodeError:
-                        continue
-
-            loaded_size += blob.size
-            progress = int((loaded_size / total_size) * 100)
-            yield stream_progress(f"Loaded {len(records):,} records so far...", progress) + "\n"
-
-        yield stream_progress(f"Total records loaded: {len(records):,}", 100) + "\n"
-
-        # Run analysis
-        yield stream_progress("Running analysis...") + "\n"
-        results = analyze_records(records)
-
-        yield stream_progress("Analysis complete!") + "\n"
-        yield stream_result(results) + "\n"
-
-    except ValueError as e:
-        yield stream_error(str(e)) + "\n"
-    except Exception as e:
-        yield stream_error(f"Error: {str(e)}") + "\n"
 
 
 @app.get("/health")
@@ -148,17 +41,92 @@ async def health():
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest):
     """
-    Analyze NDJSON data from GCS bucket.
-    Streams progress updates and final results.
+    Submit an analysis job to Cloud Batch.
+
+    Returns immediately with a job ID that can be polled for status.
     """
-    return StreamingResponse(
-        analyze_stream(request.bucket_url),
-        media_type="text/plain",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
+    job_id = f"job-{uuid.uuid4().hex[:10]}"
+
+    # Create manifest for the batch worker
+    manifest = {
+        "job_id": job_id,
+        "bucket_url": request.bucket_url,
+        "output_prefix": f"gs://{RESULTS_BUCKET}/{job_id}/"
+    }
+
+    # Upload manifest to GCS
+    client = storage.Client()
+    bucket = client.bucket(MANIFESTS_BUCKET)
+    blob = bucket.blob(f"{job_id}.json")
+    blob.upload_from_string(
+        json.dumps(manifest),
+        content_type="application/json"
     )
+
+    manifest_path = f"gs://{MANIFESTS_BUCKET}/{job_id}.json"
+
+    # Submit batch job
+    try:
+        batch_job_id = submit_batch_job(manifest_path)
+    except Exception as e:
+        return {
+            "type": "error",
+            "message": f"Failed to submit batch job: {str(e)}"
+        }
+
+    return {
+        "type": "submitted",
+        "job_id": job_id,
+        "batch_job_id": batch_job_id,
+        "message": "Job submitted to Cloud Batch"
+    }
+
+
+@app.get("/status/{job_id}")
+async def get_status(job_id: str):
+    """
+    Check the status of an analysis job.
+
+    Returns:
+    - status: "running" | "complete" | "failed" | "unknown"
+    - result: (if complete) the analysis results
+    """
+    client = storage.Client()
+
+    # First check if results exist in GCS
+    results_bucket = client.bucket(RESULTS_BUCKET)
+    result_blob = results_bucket.blob(f"{job_id}/analysis_result.json")
+
+    if result_blob.exists():
+        # Job complete - return results
+        try:
+            result_data = json.loads(result_blob.download_as_text())
+            return {
+                "status": "complete",
+                "result": result_data
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Failed to read results: {str(e)}"
+            }
+
+    # Results don't exist yet - check batch job status
+    # Try to find the batch job ID from manifest
+    manifests_bucket = client.bucket(MANIFESTS_BUCKET)
+    manifest_blob = manifests_bucket.blob(f"{job_id}.json")
+
+    if not manifest_blob.exists():
+        return {
+            "status": "unknown",
+            "message": "Job not found"
+        }
+
+    # Job exists but not complete - it's still running
+    return {
+        "status": "running",
+        "message": "Job is being processed by Cloud Batch"
+    }
 
 
 @app.get("/")
@@ -166,9 +134,11 @@ async def root():
     """Root endpoint."""
     return {
         "service": "NDJSON Analysis API",
-        "version": "1.0.0",
+        "version": "2.0.0",
+        "architecture": "Cloud Run + Cloud Batch",
         "endpoints": {
-            "POST /analyze": "Analyze NDJSON data from GCS bucket",
+            "POST /analyze": "Submit analysis job to Cloud Batch",
+            "GET /status/{job_id}": "Check job status and get results",
             "GET /health": "Health check"
         }
     }
