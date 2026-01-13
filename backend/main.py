@@ -71,11 +71,18 @@ async def analyze_stream(bucket_url: str) -> AsyncGenerator[str, None]:
         blobs = list(bucket.list_blobs(prefix=prefix))
 
         # Filter to only include data files (not directories)
-        # Accept .ndjson, .json, or any file with 'ndjson' or 'json' in the name
+        # Accept various naming patterns:
+        # - .ndjson, .json extensions
+        # - 'ndjson' or 'json' anywhere in filename (e.g., file.ndjson-00000-of-00010)
+        # - sharded files with -XXXXX-of-XXXXX pattern
+        # - text/plain content type
+        import re
+        shard_pattern = re.compile(r'-\d{5}-of-\d{5}$')
         shard_blobs = [b for b in blobs if b.size > 0 and (
             b.name.endswith(('.ndjson', '.json')) or
-            'ndjson' in b.name.lower() or
-            'json' in b.name.lower() or
+            '.ndjson' in b.name.lower() or
+            '.json' in b.name.lower() or
+            shard_pattern.search(b.name) or
             b.content_type in ('application/json', 'application/x-ndjson', 'text/plain')
         )]
         shard_blobs.sort(key=lambda b: b.name)  # Sort for consistent ordering
