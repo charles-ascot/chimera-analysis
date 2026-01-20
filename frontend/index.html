@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHIMERA Analysis Console v2.0</title>
+    <link rel="stylesheet" href="assets/app.css">
+    <style>
+        /* Additional styles for v2 features */
+        .category-section {
+            margin-bottom: 2rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .category-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 1rem 1.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .category-header:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        
+        .category-icon {
+            font-size: 1.5rem;
+        }
+        
+        .category-title {
+            flex: 1;
+            font-weight: 600;
+        }
+        
+        .category-count {
+            background: rgba(139, 92, 246, 0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+        
+        .category-fields {
+            padding: 1rem 1.5rem;
+            display: none;
+        }
+        
+        .category-fields.expanded {
+            display: block;
+        }
+        
+        .field-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+            border-left: 3px solid var(--field-color, #8B5CF6);
+        }
+        
+        .field-info {
+            flex: 1;
+        }
+        
+        .field-name {
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        
+        .field-path {
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+            margin-bottom: 4px;
+        }
+        
+        .field-description {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .field-stats {
+            text-align: right;
+        }
+        
+        .presence-bar {
+            width: 100px;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+        
+        .presence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #06B6D4, #8B5CF6);
+            transition: width 0.3s;
+        }
+        
+        .presence-text {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        .field-type {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            background: rgba(139, 92, 246, 0.2);
+            border-radius: 4px;
+            color: #A78BFA;
+            margin-top: 4px;
+            display: inline-block;
+        }
+        
+        /* Distribution charts */
+        .distribution-chart {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .distribution-title {
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+        
+        .distribution-bar {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        
+        .distribution-label {
+            width: 150px;
+            font-size: 0.9rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .distribution-bar-outer {
+            flex: 1;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            margin: 0 12px;
+            overflow: hidden;
+        }
+        
+        .distribution-bar-inner {
+            height: 100%;
+            background: linear-gradient(90deg, #06B6D4, #8B5CF6);
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        
+        .distribution-value {
+            width: 60px;
+            text-align: right;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        /* ML Suggestions */
+        .ml-card {
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .ml-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+        
+        .ml-model-type {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #A78BFA;
+        }
+        
+        .ml-approach {
+            background: rgba(6, 182, 212, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: #67E8F9;
+        }
+        
+        .ml-description {
+            margin-bottom: 1rem;
+            color: rgba(255, 255, 255, 0.8);
+        }
+        
+        .ml-features {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .ml-feature-tag {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        
+        .ml-complexity {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        /* Schema recommendations */
+        .schema-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        
+        .schema-table th,
+        .schema-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .schema-table th {
+            background: rgba(255, 255, 255, 0.05);
+            font-weight: 600;
+        }
+        
+        .schema-type {
+            font-family: monospace;
+            color: #67E8F9;
+        }
+        
+        .schema-mode {
+            font-size: 0.8rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .schema-mode.required {
+            background: rgba(34, 197, 94, 0.2);
+            color: #4ADE80;
+        }
+        
+        .schema-mode.nullable {
+            background: rgba(251, 191, 36, 0.2);
+            color: #FCD34D;
+        }
+        
+        /* Examples */
+        .example-container {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            overflow-x: auto;
+        }
+        
+        .example-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #A78BFA;
+        }
+        
+        .example-json {
+            font-family: monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            color: rgba(255, 255, 255, 0.8);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 1.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 4px;
+            border-radius: 8px;
+        }
+        
+        .tab-btn {
+            flex: 1;
+            padding: 12px 20px;
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .tab-btn:hover {
+            color: rgba(255, 255, 255, 0.8);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .tab-btn.active {
+            background: linear-gradient(135deg, #06B6D4, #8B5CF6);
+            color: #fff;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Summary cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .summary-card {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+        
+        .summary-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #06B6D4, #8B5CF6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .summary-label {
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 0.5rem;
+        }
+        
+        /* Structure visualization */
+        .structure-tree {
+            font-family: monospace;
+            font-size: 0.9rem;
+            line-height: 1.8;
+        }
+        
+        .tree-node {
+            padding-left: 1.5rem;
+            position: relative;
+        }
+        
+        .tree-node::before {
+            content: '├─';
+            position: absolute;
+            left: 0;
+            color: rgba(255, 255, 255, 0.3);
+        }
+        
+        .tree-node:last-child::before {
+            content: '└─';
+        }
+        
+        .tree-key {
+            color: #67E8F9;
+        }
+        
+        .tree-type {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="background-image"></div>
+    
+    <div class="container">
+        <header class="header">
+            <h1 class="title">
+                <span class="title-gradient">CHIMERA</span>
+                Analysis Console
+            </h1>
+            <p class="subtitle">Dynamic Field Discovery for Heterogeneous Betfair Data • v2.0</p>
+        </header>
+        
+        <!-- Input Section -->
+        <section class="card">
+            <h2>📊 Data Source</h2>
+            <div class="input-group">
+                <label for="bucketUrl">GCS URL (Dataflow Output)</label>
+                <input 
+                    type="text" 
+                    id="bucketUrl" 
+                    placeholder="gs://your-bucket/dataflow-output/"
+                    value=""
+                >
+            </div>
+            <button id="analyzeBtn" class="btn btn-primary">
+                🔍 Discover & Analyze
+            </button>
+            <p class="hint">
+                Enter the GCS path to your Dataflow output files. The analyzer will discover 
+                ALL fields present in the data without any assumptions.
+            </p>
+        </section>
+        
+        <!-- Progress Section -->
+        <section id="progressSection" class="card" style="display: none;">
+            <h2>⏳ Analysis Progress</h2>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <p id="progressMessage">Initializing...</p>
+        </section>
+        
+        <!-- Results Section -->
+        <section id="resultsSection" class="card" style="display: none;">
+            <h2>📈 Analysis Results</h2>
+            
+            <!-- Summary Grid -->
+            <div id="summaryGrid" class="summary-grid"></div>
+            
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="fields">🏷️ Fields</button>
+                <button class="tab-btn" data-tab="distributions">📊 Distributions</button>
+                <button class="tab-btn" data-tab="structure">🏗️ Structure</button>
+                <button class="tab-btn" data-tab="examples">📋 Examples</button>
+                <button class="tab-btn" data-tab="ml">🤖 ML Models</button>
+                <button class="tab-btn" data-tab="schema">💾 Schema</button>
+            </div>
+            
+            <!-- Fields Tab -->
+            <div id="fieldsTab" class="tab-content active">
+                <h3>Discovered Fields by Category</h3>
+                <p class="hint">Click a category to expand and see all fields</p>
+                <div id="fieldCategories"></div>
+            </div>
+            
+            <!-- Distributions Tab -->
+            <div id="distributionsTab" class="tab-content">
+                <h3>Value Distributions</h3>
+                <div id="distributionCharts"></div>
+            </div>
+            
+            <!-- Structure Tab -->
+            <div id="structureTab" class="tab-content">
+                <h3>Data Structure Analysis</h3>
+                <div id="structureAnalysis"></div>
+            </div>
+            
+            <!-- Examples Tab -->
+            <div id="examplesTab" class="tab-content">
+                <h3>Example Records</h3>
+                <div id="exampleRecords"></div>
+            </div>
+            
+            <!-- ML Tab -->
+            <div id="mlTab" class="tab-content">
+                <h3>Suggested ML Models</h3>
+                <p class="hint">Based on the fields discovered in your data</p>
+                <div id="mlSuggestions"></div>
+            </div>
+            
+            <!-- Schema Tab -->
+            <div id="schemaTab" class="tab-content">
+                <h3>BigQuery Schema Recommendations</h3>
+                <div id="schemaRecommendations"></div>
+            </div>
+        </section>
+        
+        <!-- Raw JSON Section -->
+        <section id="rawSection" class="card" style="display: none;">
+            <h2>🔧 Raw Analysis Data</h2>
+            <button id="toggleRaw" class="btn btn-secondary">Show Raw JSON</button>
+            <div id="rawJson" class="example-container" style="display: none;"></div>
+        </section>
+    </div>
+    
+    <script>
+        // API Base URL
+        const API_BASE = window.location.hostname === 'localhost' 
+            ? 'http://localhost:8080'
+            : 'https://chimera-analysis-1026419041222.us-central1.run.app';
+        
+        // DOM Elements
+        const bucketUrlInput = document.getElementById('bucketUrl');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const progressSection = document.getElementById('progressSection');
+        const progressFill = document.getElementById('progressFill');
+        const progressMessage = document.getElementById('progressMessage');
+        const resultsSection = document.getElementById('resultsSection');
+        const rawSection = document.getElementById('rawSection');
+        
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab + 'Tab').classList.add('active');
+            });
+        });
+        
+        // Analyze button click
+        analyzeBtn.addEventListener('click', async () => {
+            const bucketUrl = bucketUrlInput.value.trim();
+            if (!bucketUrl) {
+                alert('Please enter a GCS URL');
+                return;
+            }
+            
+            progressSection.style.display = 'block';
+            resultsSection.style.display = 'none';
+            rawSection.style.display = 'none';
+            analyzeBtn.disabled = true;
+            
+            try {
+                // Submit job
+                const response = await fetch(`${API_BASE}/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bucket_url: bucketUrl })
+                });
+                
+                const data = await response.json();
+                
+                if (data.job_id) {
+                    // Poll for status
+                    pollStatus(data.job_id);
+                } else {
+                    throw new Error(data.detail || 'Failed to start analysis');
+                }
+            } catch (error) {
+                progressMessage.textContent = `Error: ${error.message}`;
+                analyzeBtn.disabled = false;
+            }
+        });
+        
+        // Poll job status
+        async function pollStatus(jobId) {
+            try {
+                const response = await fetch(`${API_BASE}/status/${jobId}`);
+                const data = await response.json();
+                
+                progressMessage.textContent = data.message || data.status;
+                progressFill.style.width = `${data.progress || 0}%`;
+                
+                if (data.status === 'complete') {
+                    displayResults(data.result);
+                    analyzeBtn.disabled = false;
+                } else if (data.status === 'error') {
+                    progressMessage.textContent = `Error: ${data.error}`;
+                    analyzeBtn.disabled = false;
+                } else {
+                    // Continue polling
+                    setTimeout(() => pollStatus(jobId), 2000);
+                }
+            } catch (error) {
+                progressMessage.textContent = `Error: ${error.message}`;
+                analyzeBtn.disabled = false;
+            }
+        }
+        
+        // Display results
+        function displayResults(result) {
+            resultsSection.style.display = 'block';
+            rawSection.style.display = 'block';
+            
+            // Summary grid
+            const summaryGrid = document.getElementById('summaryGrid');
+            summaryGrid.innerHTML = `
+                <div class="summary-card">
+                    <div class="summary-value">${(result.total_records || 0).toLocaleString()}</div>
+                    <div class="summary-label">Total Records</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-value">${(result.discovered_fields || []).length}</div>
+                    <div class="summary-label">Unique Field Paths</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-value">${Object.keys(result.field_categories || {}).length}</div>
+                    <div class="summary-label">Field Categories</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-value">${result.temporal_analysis?.duration_readable || 'N/A'}</div>
+                    <div class="summary-label">Data Duration</div>
+                </div>
+            `;
+            
+            // Field categories
+            displayFieldCategories(result.field_categories || {});
+            
+            // Distributions
+            displayDistributions(result.value_distributions || {});
+            
+            // Structure
+            displayStructure(result.structure_analysis || {});
+            
+            // Examples
+            displayExamples(result.examples || {});
+            
+            // ML suggestions
+            displayMLSuggestions(result.ml_suggestions || []);
+            
+            // Schema
+            displaySchema(result.schema_recommendations || {});
+            
+            // Raw JSON
+            document.getElementById('rawJson').innerHTML = `<pre class="example-json">${JSON.stringify(result, null, 2)}</pre>`;
+        }
+        
+        // Display field categories
+        function displayFieldCategories(categories) {
+            const container = document.getElementById('fieldCategories');
+            container.innerHTML = '';
+            
+            for (const [catName, catData] of Object.entries(categories)) {
+                const section = document.createElement('div');
+                section.className = 'category-section';
+                
+                section.innerHTML = `
+                    <div class="category-header" onclick="this.nextElementSibling.classList.toggle('expanded')">
+                        <span class="category-icon">${catData.icon || '📁'}</span>
+                        <span class="category-title">${catName}</span>
+                        <span class="category-count">${catData.field_count} fields</span>
+                    </div>
+                    <div class="category-fields">
+                        ${(catData.fields || []).map(field => `
+                            <div class="field-card" style="--field-color: ${catData.color || '#8B5CF6'}">
+                                <div class="field-info">
+                                    <div class="field-name">${field.name || field.key}</div>
+                                    <div class="field-path">${field.path}</div>
+                                    <span class="field-type">${field.type}</span>
+                                </div>
+                                <div class="field-stats">
+                                    <div class="presence-bar">
+                                        <div class="presence-fill" style="width: ${field.presence_pct}%"></div>
+                                    </div>
+                                    <div class="presence-text">${field.presence_pct}% present</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                container.appendChild(section);
+            }
+        }
+        
+        // Display distributions
+        function displayDistributions(distributions) {
+            const container = document.getElementById('distributionCharts');
+            container.innerHTML = '';
+            
+            for (const [fieldPath, distData] of Object.entries(distributions)) {
+                const chart = document.createElement('div');
+                chart.className = 'distribution-chart';
+                
+                const maxCount = Math.max(...distData.distribution.map(d => d.count));
+                
+                chart.innerHTML = `
+                    <div class="distribution-title">${distData.field_name || fieldPath}</div>
+                    <p style="font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-bottom: 1rem;">
+                        ${distData.unique_values} unique values (sampled ${distData.sample_size.toLocaleString()} records)
+                    </p>
+                    ${distData.distribution.slice(0, 10).map(d => `
+                        <div class="distribution-bar">
+                            <div class="distribution-label" title="${d.value}">${d.value}</div>
+                            <div class="distribution-bar-outer">
+                                <div class="distribution-bar-inner" style="width: ${(d.count / maxCount) * 100}%"></div>
+                            </div>
+                            <div class="distribution-value">${d.pct}%</div>
+                        </div>
+                    `).join('')}
+                `;
+                
+                container.appendChild(chart);
+            }
+            
+            if (Object.keys(distributions).length === 0) {
+                container.innerHTML = '<p>No categorical distributions found in the data.</p>';
+            }
+        }
+        
+        // Display structure
+        function displayStructure(structure) {
+            const container = document.getElementById('structureAnalysis');
+            
+            container.innerHTML = `
+                <div class="summary-grid" style="margin-bottom: 2rem;">
+                    <div class="summary-card">
+                        <div class="summary-value">${structure.max_depth || 0}</div>
+                        <div class="summary-label">Max Nesting Depth</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-value">${(structure.top_level_fields || []).length}</div>
+                        <div class="summary-label">Top-Level Fields</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-value">${(structure.nested_structures || []).length}</div>
+                        <div class="summary-label">Nested Structures</div>
+                    </div>
+                </div>
+                
+                <h4>Top-Level Fields</h4>
+                <div class="example-container">
+                    ${(structure.top_level_fields || []).map(f => `<span class="ml-feature-tag">${f}</span>`).join(' ')}
+                </div>
+                
+                <h4>Nested Structures</h4>
+                <div class="example-container">
+                    ${(structure.nested_structures || []).sort().map(f => `<div class="tree-node"><span class="tree-key">${f}</span></div>`).join('')}
+                </div>
+            `;
+        }
+        
+        // Display examples
+        function displayExamples(examples) {
+            const container = document.getElementById('exampleRecords');
+            container.innerHTML = '';
+            
+            const exampleLabels = {
+                'first_record': '📄 First Record',
+                'with_market_definition': '🏷️ Record with Market Definition',
+                'with_price_data': '💰 Record with Price Data'
+            };
+            
+            for (const [key, value] of Object.entries(examples)) {
+                const div = document.createElement('div');
+                div.className = 'example-container';
+                div.innerHTML = `
+                    <div class="example-title">${exampleLabels[key] || key}</div>
+                    <pre class="example-json">${JSON.stringify(value, null, 2)}</pre>
+                `;
+                container.appendChild(div);
+            }
+            
+            if (Object.keys(examples).length === 0) {
+                container.innerHTML = '<p>No example records found.</p>';
+            }
+        }
+        
+        // Display ML suggestions
+        function displayMLSuggestions(suggestions) {
+            const container = document.getElementById('mlSuggestions');
+            container.innerHTML = '';
+            
+            for (const suggestion of suggestions) {
+                const card = document.createElement('div');
+                card.className = 'ml-card';
+                card.innerHTML = `
+                    <div class="ml-card-header">
+                        <div class="ml-model-type">${suggestion.model_type}</div>
+                        <div class="ml-approach">${suggestion.approach}</div>
+                    </div>
+                    <div class="ml-description">${suggestion.description}</div>
+                    <div style="margin-bottom: 0.5rem; font-size: 0.9rem; color: rgba(255,255,255,0.7);">
+                        <strong>Key Features:</strong>
+                    </div>
+                    <div class="ml-features">
+                        ${(suggestion.key_features || []).map(f => `<span class="ml-feature-tag">${f}</span>`).join('')}
+                    </div>
+                    <div class="ml-complexity">
+                        <strong>Target:</strong> ${suggestion.target} • 
+                        <strong>Complexity:</strong> ${suggestion.complexity}
+                    </div>
+                    ${suggestion.note ? `<div style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(34,197,94,0.1); border-radius: 4px; font-size: 0.85rem; color: #4ADE80;">💡 ${suggestion.note}</div>` : ''}
+                `;
+                container.appendChild(card);
+            }
+            
+            if (suggestions.length === 0) {
+                container.innerHTML = '<p>No ML model suggestions available. Upload data with price/volume fields for recommendations.</p>';
+            }
+        }
+        
+        // Display schema
+        function displaySchema(schema) {
+            const container = document.getElementById('schemaRecommendations');
+            
+            const columns = schema.bigquery_schema || [];
+            
+            if (columns.length === 0) {
+                container.innerHTML = '<p>No schema recommendations available.</p>';
+                return;
+            }
+            
+            container.innerHTML = `
+                ${schema.notes ? `
+                    <div class="example-container" style="margin-bottom: 1rem;">
+                        <strong>Notes:</strong>
+                        <ul style="margin: 0.5rem 0 0 1.5rem;">
+                            ${schema.notes.map(n => `<li>${n}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+                
+                <div style="overflow-x: auto;">
+                    <table class="schema-table">
+                        <thead>
+                            <tr>
+                                <th>Column Name</th>
+                                <th>Type</th>
+                                <th>Mode</th>
+                                <th>Source Path</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${columns.map(col => `
+                                <tr>
+                                    <td><strong>${col.name}</strong></td>
+                                    <td><span class="schema-type">${col.type}</span></td>
+                                    <td><span class="schema-mode ${col.mode.toLowerCase()}">${col.mode}</span></td>
+                                    <td style="font-family: monospace; font-size: 0.85rem; color: rgba(255,255,255,0.6);">${col.source_path}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        // Toggle raw JSON
+        document.getElementById('toggleRaw').addEventListener('click', () => {
+            const rawJson = document.getElementById('rawJson');
+            rawJson.style.display = rawJson.style.display === 'none' ? 'block' : 'none';
+        });
+    </script>
+</body>
+</html>

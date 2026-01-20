@@ -1,0 +1,5 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+google-cloud-storage==2.14.0
+google-cloud-batch==0.17.0
+pydantic==2.5.3
