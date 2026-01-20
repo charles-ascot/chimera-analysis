@@ -1,24 +1,45 @@
 """
-CHIMERA Analysis Engine v2.0 - Dynamic Field Discovery
+CHIMERA Analysis Engine v2.1 - Dynamic Field Discovery with Plugin Support
 
 This analyzer discovers ALL fields present in raw Betfair data without any
 hardcoded assumptions. It handles nested structures, maps fields to human-readable
-names, and provides comprehensive statistics.
+names using external plugins, and provides comprehensive statistics.
 
 Philosophy:
 - NEVER normalize data - keep raw format
 - DISCOVER all fields dynamically - no presets
 - HANDLE heterogeneous data - every batch is different
 - PRESENT visually - human-readable names, not codes
+- USE PLUGINS for field definitions - no hardcoded mappings
 """
 
 import json
 import re
+import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 from google.cloud import storage
 
-from betfair_dictionary import get_field_info, FIELD_CATEGORIES
+# Try to load plugin system, fall back to legacy dictionary
+try:
+    from plugin_loader import (
+        load_plugin,
+        get_field_info,
+        get_category_info,
+        get_all_categories,
+        get_ml_recommendations,
+        get_bigquery_config,
+        get_derived_features,
+    )
+    USE_PLUGINS = True
+    print("Plugin system loaded successfully")
+except ImportError:
+    from betfair_dictionary import get_field_info, FIELD_CATEGORIES
+    USE_PLUGINS = False
+    print("Using legacy betfair_dictionary (plugin_loader not available)")
+
+# Active plugin ID (can be overridden)
+ACTIVE_PLUGIN = os.environ.get("CHIMERA_PLUGIN", "betfair")
 
 
 def load_records_from_gcs(bucket_url: str) -> List[dict]:
@@ -102,7 +123,8 @@ def discover_fields_recursive(
     field_registry: Dict = None,
     depth: int = 0,
     max_depth: int = 10,
-    context: str = None
+    context: str = None,
+    plugin_id: str = None
 ) -> Dict:
     """
     Recursively discover all fields in a nested structure.
@@ -114,6 +136,7 @@ def discover_fields_recursive(
         depth: Current recursion depth
         max_depth: Maximum recursion depth
         context: Context hint for field lookup (e.g., 'rc', 'marketDefinition')
+        plugin_id: Plugin to use for field definitions
     
     Returns:
         Updated field registry
@@ -123,6 +146,9 @@ def discover_fields_recursive(
     
     if depth > max_depth:
         return field_registry
+    
+    if plugin_id is None:
+        plugin_id = ACTIVE_PLUGIN
     
     if isinstance(obj, dict):
         for key, value in obj.items():
@@ -143,8 +169,11 @@ def discover_fields_recursive(
             elif key == 'uo':
                 child_context = 'uo'
             
-            # Get field info from dictionary
-            field_info = get_field_info(key, child_context)
+            # Get field info from plugin
+            if USE_PLUGINS:
+                field_info = get_field_info(key, plugin_id, child_context)
+            else:
+                field_info = get_field_info(key, child_context)
             
             # Determine value type
             value_type = type(value).__name__
@@ -162,9 +191,10 @@ def discover_fields_recursive(
                 field_registry[field_path] = {
                     "path": field_path,
                     "key": key,
-                    "name": field_info["name"],
-                    "description": field_info["description"],
-                    "category": field_info["category"],
+                    "name": field_info.get("name", key),
+                    "description": field_info.get("description", ""),
+                    "category": field_info.get("category", "Unknown"),
+                    "ml_relevance": field_info.get("ml_relevance", "unknown"),
                     "type": value_type,
                     "count": 0,
                     "sample_values": [],
@@ -185,40 +215,53 @@ def discover_fields_recursive(
             
             # Recurse into nested structures
             if isinstance(value, dict):
-                discover_fields_recursive(value, field_path, field_registry, depth + 1, max_depth, child_context)
+                discover_fields_recursive(value, field_path, field_registry, depth + 1, max_depth, child_context, plugin_id)
             elif isinstance(value, list):
                 # Sample first few items of arrays
                 for i, item in enumerate(value[:3]):
                     if isinstance(item, dict):
                         item_path = f"{field_path}[{i}]"
-                        discover_fields_recursive(item, item_path, field_registry, depth + 1, max_depth, child_context)
+                        discover_fields_recursive(item, item_path, field_registry, depth + 1, max_depth, child_context, plugin_id)
     
     return field_registry
 
 
-def analyze_records(bucket_url: str = None, records: List = None) -> Dict:
+def analyze_records(bucket_url: str = None, records: List = None, plugin_id: str = None) -> Dict:
     """
     Run complete dynamic analysis on NDJSON records.
     
     This function discovers ALL fields present without any hardcoded assumptions.
+    Uses external plugin for field definitions and ML recommendations.
     
     Args:
         bucket_url: GCS path to load data from
         records: Pre-loaded list of records
+        plugin_id: Plugin to use for field definitions (default: ACTIVE_PLUGIN)
     
     Returns:
         Comprehensive analysis results
     """
+    if plugin_id is None:
+        plugin_id = ACTIVE_PLUGIN
+    
     # Load records if needed
     if bucket_url and not records:
         records = load_records_from_gcs(bucket_url)
     elif not records:
         records = []
     
-    print(f"Analyzing {len(records):,} records...")
+    print(f"Analyzing {len(records):,} records using plugin: {plugin_id}")
+    
+    # Load plugin for category info
+    if USE_PLUGINS:
+        plugin = load_plugin(plugin_id)
+        all_categories = get_all_categories(plugin_id)
+    else:
+        all_categories = FIELD_CATEGORIES
     
     results = {
         "total_records": len(records),
+        "plugin_id": plugin_id,
         "discovered_fields": [],
         "field_categories": {},
         "structure_analysis": {},
@@ -241,7 +284,7 @@ def analyze_records(bucket_url: str = None, records: List = None) -> Dict:
     field_registry = {}
     
     for i, record in enumerate(records):
-        discover_fields_recursive(record, "", field_registry)
+        discover_fields_recursive(record, "", field_registry, plugin_id=plugin_id)
         
         if (i + 1) % 10000 == 0:
             print(f"  Scanned {i + 1:,} records, found {len(field_registry)} unique field paths")
@@ -278,15 +321,24 @@ def analyze_records(bucket_url: str = None, records: List = None) -> Dict:
             "name": field_data["name"],
             "type": field_data["type"],
             "presence_pct": field_data["presence_pct"],
+            "ml_relevance": field_data.get("ml_relevance", "unknown"),
         })
     
-    # Add category metadata
+    # Add category metadata from plugin
     for cat_name, fields in categories.items():
-        cat_info = FIELD_CATEGORIES.get(cat_name, FIELD_CATEGORIES["Unknown"])
+        if USE_PLUGINS:
+            cat_info = get_category_info(cat_name, plugin_id)
+        else:
+            cat_info = FIELD_CATEGORIES.get(cat_name, FIELD_CATEGORIES.get("Unknown", {
+                "icon": "❓",
+                "description": "Unknown category",
+                "color": "#6B7280"
+            }))
+        
         results["field_categories"][cat_name] = {
-            "icon": cat_info["icon"],
-            "description": cat_info["description"],
-            "color": cat_info["color"],
+            "icon": cat_info.get("icon", "❓"),
+            "description": cat_info.get("description", ""),
+            "color": cat_info.get("color", "#6B7280"),
             "field_count": len(fields),
             "fields": fields,
         }
@@ -471,7 +523,7 @@ def analyze_records(bucket_url: str = None, records: List = None) -> Dict:
     }
     
     # ========================================================================
-    # PHASE 9: ML MODEL SUGGESTIONS
+    # PHASE 9: ML MODEL SUGGESTIONS (from plugin)
     # ========================================================================
     print("Phase 9: Suggesting ML models...")
     
@@ -479,50 +531,133 @@ def analyze_records(bucket_url: str = None, records: List = None) -> Dict:
     has_prices = any("ltp" in f["path"] or "batb" in f["path"] for f in sorted_fields)
     has_volume = any("tv" in f["path"] or "trd" in f["path"] for f in sorted_fields)
     has_time_series = len(timestamps) > 100
+    has_order_book = any("batb" in f["path"] or "batl" in f["path"] for f in sorted_fields)
     has_market_definition = any("marketDefinition" in f["path"] for f in sorted_fields)
+    has_trd = any("trd" in f["path"] for f in sorted_fields)
     
     suggestions = []
     
-    if has_prices and has_time_series:
-        suggestions.append({
-            "model_type": "Price Movement Prediction",
-            "approach": "LSTM / Transformer",
-            "description": "Predict price direction using time-series of ltp, batb, batl",
-            "key_features": ["ltp", "batb", "batl", "tv"],
-            "target": "Price direction (up/down) or price at T+n",
-            "complexity": "High",
-        })
-    
-    if has_prices and has_volume:
-        suggestions.append({
-            "model_type": "Market Microstructure Analysis",
-            "approach": "Gradient Boosting (XGBoost/LightGBM)",
-            "description": "Analyze order book dynamics and trading patterns",
-            "key_features": ["batb", "batl", "trd", "tv", "spread"],
-            "target": "Execution quality, market impact",
-            "complexity": "Medium",
-        })
-    
-    if has_prices:
-        suggestions.append({
-            "model_type": "Visual Price Patterns (Heat Map CNN)",
-            "approach": "Convolutional Neural Network",
-            "description": "Convert price ladders to images using Gramian Angular Field encoding",
-            "key_features": ["batb", "batl", "ltp time series"],
-            "target": "Pattern classification, price prediction",
-            "complexity": "High",
-            "note": "Novel approach with potential 40%+ improvement over traditional ML",
-        })
-    
-    if has_market_definition:
-        suggestions.append({
-            "model_type": "Market Classification",
-            "approach": "Random Forest / Neural Network",
-            "description": "Classify market types, predict liquidity",
-            "key_features": ["marketType", "numberOfActiveRunners", "venue", "countryCode"],
-            "target": "Market category, expected volume",
-            "complexity": "Low",
-        })
+    # Get recommendations from plugin
+    if USE_PLUGINS:
+        plugin_ml = get_ml_recommendations(plugin_id)
+        derived_features = get_derived_features(plugin_id)
+        
+        # Map data availability to plugin recommendations
+        data_profile = {
+            "has_prices": has_prices,
+            "has_volume": has_volume,
+            "has_order_book": has_order_book,
+            "has_time_series": has_time_series,
+            "has_market_definition": has_market_definition,
+            "has_trd": has_trd,
+        }
+        
+        # DeepLOB - needs order book data
+        if "DeepLOB" in plugin_ml and has_order_book and has_time_series:
+            model_info = plugin_ml["DeepLOB"]
+            suggestions.append({
+                "model_type": model_info.get("name", "DeepLOB"),
+                "approach": model_info.get("architecture", "CNN + Inception + LSTM"),
+                "description": model_info.get("description", "State-of-the-art limit order book prediction"),
+                "key_features": model_info.get("input_features", {}).get("primary", ["batb", "batl", "ltp", "tv"]),
+                "target": model_info.get("target", "Mid-price direction"),
+                "complexity": model_info.get("complexity", "High"),
+                "reference": model_info.get("reference", "Zhang et al., 2019"),
+                "suitability": model_info.get("suitability", "Primary recommendation"),
+            })
+        
+        # GAF_CNN - needs price time series
+        if "GAF_CNN" in plugin_ml and has_prices and has_time_series:
+            model_info = plugin_ml["GAF_CNN"]
+            suggestions.append({
+                "model_type": model_info.get("name", "Gramian Angular Field + CNN"),
+                "approach": model_info.get("architecture", "GAF Image Encoding + Pre-trained CNN"),
+                "description": model_info.get("description", "Visual pattern recognition on time series"),
+                "key_features": model_info.get("input_features", {}).get("primary", ["ltp"]),
+                "target": model_info.get("target", "Price direction, pattern classification"),
+                "complexity": model_info.get("complexity", "High"),
+                "preprocessing": model_info.get("preprocessing", {}),
+                "reference": model_info.get("reference", "Chen (2021)"),
+                "suitability": model_info.get("suitability", "Secondary recommendation"),
+                "note": "This is your Heat Map approach - converts market data to images for CNN pattern recognition",
+            })
+        
+        # XGBoost Baseline - always applicable with prices
+        if "XGBoost_Baseline" in plugin_ml and has_prices:
+            model_info = plugin_ml["XGBoost_Baseline"]
+            suggestions.append({
+                "model_type": model_info.get("name", "XGBoost/LightGBM Baseline"),
+                "approach": model_info.get("architecture", "Gradient Boosted Decision Trees"),
+                "description": model_info.get("description", "Interpretable baseline with engineered features"),
+                "key_features": model_info.get("input_features", {}).get("engineered", ["spread", "order_imbalance"]),
+                "target": model_info.get("target", "Price direction"),
+                "complexity": model_info.get("complexity", "Medium"),
+                "suitability": model_info.get("suitability", "Baseline"),
+            })
+        
+        # Temporal Fusion Transformer - for advanced multi-horizon
+        if "Temporal_Fusion_Transformer" in plugin_ml and has_time_series and has_market_definition:
+            model_info = plugin_ml["Temporal_Fusion_Transformer"]
+            suggestions.append({
+                "model_type": model_info.get("name", "Temporal Fusion Transformer"),
+                "approach": model_info.get("architecture", "Multi-horizon attention-based forecasting"),
+                "description": model_info.get("description", "Advanced model for static and dynamic features"),
+                "key_features": {
+                    "static": model_info.get("input_features", {}).get("static", []),
+                    "dynamic": model_info.get("input_features", {}).get("dynamic", []),
+                },
+                "target": model_info.get("target", "Multi-horizon price prediction"),
+                "complexity": model_info.get("complexity", "Very High"),
+                "advantages": model_info.get("advantages", []),
+                "suitability": model_info.get("suitability", "Advanced"),
+            })
+        
+        # Add derived features to results
+        results["derived_features"] = derived_features
+        results["data_profile"] = data_profile
+        
+    else:
+        # Legacy fallback - hardcoded suggestions
+        if has_prices and has_time_series:
+            suggestions.append({
+                "model_type": "Price Movement Prediction",
+                "approach": "LSTM / Transformer",
+                "description": "Predict price direction using time-series of ltp, batb, batl",
+                "key_features": ["ltp", "batb", "batl", "tv"],
+                "target": "Price direction (up/down) or price at T+n",
+                "complexity": "High",
+            })
+        
+        if has_prices and has_volume:
+            suggestions.append({
+                "model_type": "Market Microstructure Analysis",
+                "approach": "Gradient Boosting (XGBoost/LightGBM)",
+                "description": "Analyze order book dynamics and trading patterns",
+                "key_features": ["batb", "batl", "trd", "tv", "spread"],
+                "target": "Execution quality, market impact",
+                "complexity": "Medium",
+            })
+        
+        if has_prices:
+            suggestions.append({
+                "model_type": "Visual Price Patterns (Heat Map CNN)",
+                "approach": "Convolutional Neural Network",
+                "description": "Convert price ladders to images using Gramian Angular Field encoding",
+                "key_features": ["batb", "batl", "ltp time series"],
+                "target": "Pattern classification, price prediction",
+                "complexity": "High",
+                "note": "Novel approach with potential 40%+ improvement over traditional ML",
+            })
+        
+        if has_market_definition:
+            suggestions.append({
+                "model_type": "Market Classification",
+                "approach": "Random Forest / Neural Network",
+                "description": "Classify market types, predict liquidity",
+                "key_features": ["marketType", "numberOfActiveRunners", "venue", "countryCode"],
+                "target": "Market category, expected volume",
+                "complexity": "Low",
+            })
     
     results["ml_suggestions"] = suggestions
     

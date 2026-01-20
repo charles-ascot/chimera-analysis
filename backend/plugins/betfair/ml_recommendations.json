@@ -1,0 +1,213 @@
+{
+  "_metadata": {
+    "description": "Machine Learning recommendations for Betfair Exchange data",
+    "version": "1.0.0",
+    "based_on": "Academic research in market microstructure and sports betting prediction"
+  },
+
+  "derived_features": {
+    "spread": {
+      "name": "Bid-Ask Spread",
+      "formula": "batl[0][1] - batb[0][1]",
+      "description": "Difference between best lay and best back prices",
+      "ml_use": "Liquidity indicator, volatility proxy",
+      "required_fields": ["batb", "batl"]
+    },
+    
+    "mid_price": {
+      "name": "Mid Price",
+      "formula": "(batb[0][1] + batl[0][1]) / 2",
+      "description": "Mid-point between best back and lay prices",
+      "ml_use": "Fair value estimate, common target variable",
+      "required_fields": ["batb", "batl"]
+    },
+    
+    "order_imbalance": {
+      "name": "Order Imbalance",
+      "formula": "(sum(batb_sizes) - sum(batl_sizes)) / (sum(batb_sizes) + sum(batl_sizes))",
+      "description": "Relative imbalance between back and lay volume",
+      "ml_use": "Directional pressure indicator",
+      "range": [-1, 1],
+      "required_fields": ["batb", "batl"]
+    },
+    
+    "time_to_off": {
+      "name": "Time to Off",
+      "formula": "marketTime - pt",
+      "description": "Seconds until scheduled race start",
+      "ml_use": "Critical temporal feature - patterns change as race approaches",
+      "required_fields": ["pt", "marketTime"]
+    },
+    
+    "vwap": {
+      "name": "Volume Weighted Average Price",
+      "formula": "sum(trd[][0] * trd[][1]) / sum(trd[][1])",
+      "description": "Volume-weighted average price from traded ladder",
+      "ml_use": "Alternative fair value, comparison with ltp",
+      "required_fields": ["trd"]
+    },
+    
+    "price_momentum": {
+      "name": "Price Momentum",
+      "formula": "ltp[t] - ltp[t-n]",
+      "description": "Price change over n updates",
+      "ml_use": "Trend detection",
+      "required_fields": ["ltp"]
+    },
+    
+    "volume_acceleration": {
+      "name": "Volume Acceleration",
+      "formula": "tv[t] - tv[t-1]",
+      "description": "Change in traded volume between updates",
+      "ml_use": "Activity spike detection",
+      "required_fields": ["tv"]
+    },
+    
+    "book_depth_ratio": {
+      "name": "Book Depth Ratio",
+      "formula": "sum(batb_sizes[:3]) / sum(batl_sizes[:3])",
+      "description": "Ratio of back to lay volume in top 3 levels",
+      "ml_use": "Directional strength indicator",
+      "required_fields": ["batb", "batl"]
+    }
+  },
+
+  "recommended_models": {
+    "DeepLOB": {
+      "name": "DeepLOB",
+      "architecture": "CNN + Inception Module + LSTM",
+      "description": "State-of-the-art limit order book prediction model",
+      "input_features": {
+        "primary": ["batb", "batl", "ltp", "tv"],
+        "optional": ["trd"]
+      },
+      "target": "Mid-price direction (up/down/stable)",
+      "prediction_horizons": [10, 50, 100],
+      "reference": "Zhang et al., 2019 - DeepLOB: Deep Convolutional Neural Networks for Limit Order Books",
+      "suitability": "Primary recommendation - state-of-the-art for LOB prediction",
+      "complexity": "High",
+      "data_requirements": {
+        "min_records": 100000,
+        "min_field_presence": {
+          "batb": 50,
+          "batl": 30,
+          "ltp": 90
+        }
+      },
+      "notes": "LOBFrame research demonstrates this model generalizes across instruments - relevant for horse racing where patterns may transfer across races/venues"
+    },
+
+    "GAF_CNN": {
+      "name": "Gramian Angular Field + CNN",
+      "architecture": "GAF Image Encoding + Pre-trained CNN (ResNet/VGG)",
+      "description": "Visual pattern recognition on time series converted to images",
+      "input_features": {
+        "primary": ["ltp"],
+        "optional": ["batb", "batl"]
+      },
+      "target": "Price direction, pattern classification",
+      "preprocessing": {
+        "method": "Gramian Angular Field transformation",
+        "encoding": "GASF (summation) + GADF (difference) as RGB channels",
+        "window_size": "Configurable (e.g., 50-100 time steps)"
+      },
+      "reference": "Chen (2021) - Applied GAF-CNN to sports betting odds with success",
+      "suitability": "Secondary recommendation - captures visual patterns that traditional models miss",
+      "complexity": "High",
+      "notes": "Use GASF + GADF together to preserve directional information and avoid non-uniqueness issues with cosine-only encoding"
+    },
+
+    "XGBoost_Baseline": {
+      "name": "XGBoost/LightGBM Baseline",
+      "architecture": "Gradient Boosted Decision Trees",
+      "description": "Interpretable baseline with engineered features",
+      "input_features": {
+        "engineered": ["spread", "order_imbalance", "vwap", "price_momentum", "time_to_off"],
+        "categorical": ["venue", "marketType", "numberOfActiveRunners"]
+      },
+      "target": "Price direction or value",
+      "reference": "Kearns & Nevmyvaka - demonstrate order book features predict price direction",
+      "suitability": "Baseline - interpretable, handles mixed features well",
+      "complexity": "Medium",
+      "notes": "Serves as sanity check for deep learning approaches. Provides feature importance for understanding."
+    },
+
+    "Temporal_Fusion_Transformer": {
+      "name": "Temporal Fusion Transformer",
+      "architecture": "Multi-horizon attention-based forecasting",
+      "description": "Advanced model handling static and dynamic features with interpretable attention",
+      "input_features": {
+        "static": ["venue", "marketType", "numberOfActiveRunners"],
+        "dynamic": ["ltp", "tv", "batb", "batl", "time_to_off"]
+      },
+      "target": "Multi-horizon price prediction (5s, 30s, 60s before race)",
+      "advantages": [
+        "Handles mixed static and dynamic features",
+        "Multi-horizon prediction",
+        "Interpretable attention weights show which time steps matter",
+        "Handles irregular time intervals (streaming data)"
+      ],
+      "suitability": "Advanced - for production systems requiring interpretability",
+      "complexity": "Very High"
+    }
+  },
+
+  "feature_availability_matrix": {
+    "description": "Typical field presence percentages from ADVANCED tier data",
+    "guidance": "Fields below 50% presence may need imputation or separate model branches",
+    "typical_presence": {
+      "ltp": 99,
+      "tv": 99,
+      "batb": 68,
+      "batl": 40,
+      "trd": 20,
+      "marketDefinition": 1,
+      "pt": 100,
+      "clk": 100
+    },
+    "notes": {
+      "trd": "Lower presence because it only appears when trades occur. Increases significantly near race time.",
+      "marketDefinition": "Sent only when metadata changes - join to streaming data via market_id",
+      "batl": "Lower than batb because lay liquidity is typically thinner"
+    }
+  },
+
+  "model_selection_guide": {
+    "by_data_volume": {
+      "small": {
+        "records": "<100,000",
+        "recommendation": "XGBoost_Baseline",
+        "reason": "Deep learning needs more data"
+      },
+      "medium": {
+        "records": "100,000 - 1,000,000",
+        "recommendation": "DeepLOB or GAF_CNN",
+        "reason": "Sufficient data for deep learning"
+      },
+      "large": {
+        "records": ">1,000,000",
+        "recommendation": "Temporal_Fusion_Transformer or ensemble",
+        "reason": "Can leverage complex architectures"
+      }
+    },
+    
+    "by_use_case": {
+      "price_direction": {
+        "primary": "DeepLOB",
+        "alternative": "XGBoost_Baseline"
+      },
+      "bsp_prediction": {
+        "primary": "XGBoost_Baseline with spn/spf features",
+        "alternative": "Temporal_Fusion_Transformer"
+      },
+      "pattern_discovery": {
+        "primary": "GAF_CNN",
+        "reason": "Visual patterns may reveal novel strategies"
+      },
+      "real_time_inference": {
+        "primary": "XGBoost_Baseline",
+        "reason": "Fastest inference time"
+      }
+    }
+  }
+}

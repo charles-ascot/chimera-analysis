@@ -1,0 +1,154 @@
+{
+  "categories": {
+    "Message Metadata": {
+      "icon": "📨",
+      "color": "#6B7280",
+      "description": "Message-level fields for routing, timing, and stream management",
+      "fields_pattern": ["op", "pt", "clk", "initialClk", "ct", "img", "con", "status", "segmentType"]
+    },
+    "Market Identity": {
+      "icon": "🏷️",
+      "color": "#3B82F6",
+      "description": "Unique identifiers for markets",
+      "fields_pattern": ["id", "marketId"]
+    },
+    "Event Identity": {
+      "icon": "📅",
+      "color": "#8B5CF6",
+      "description": "Event and competition identifiers",
+      "fields_pattern": ["eventId", "eventTypeId", "competitionId", "countryCode"]
+    },
+    "Event Location": {
+      "icon": "📍",
+      "color": "#10B981",
+      "description": "Geographic and venue information",
+      "fields_pattern": ["venue", "timezone"]
+    },
+    "Event Timing": {
+      "icon": "⏰",
+      "color": "#F59E0B",
+      "description": "Timestamps and scheduling information",
+      "fields_pattern": ["marketTime", "openDate", "settledTime", "suspendTime"]
+    },
+    "Market State": {
+      "icon": "🔄",
+      "color": "#EF4444",
+      "description": "Current market status and conditions",
+      "fields_pattern": ["status", "inPlay", "complete", "crossMatching", "runnersVoidable", "turnInPlayEnabled", "betDelay"]
+    },
+    "Market Features": {
+      "icon": "⚙️",
+      "color": "#6366F1",
+      "description": "Market configuration and rules",
+      "fields_pattern": ["persistenceEnabled", "bspMarket", "discountAllowed", "bspReconciled"]
+    },
+    "Market Structure": {
+      "icon": "🏗️",
+      "color": "#EC4899",
+      "description": "Market composition information",
+      "fields_pattern": ["numberOfActiveRunners", "numberOfWinners", "regulators"]
+    },
+    "Market Type": {
+      "icon": "📊",
+      "color": "#14B8A6",
+      "description": "Market classification",
+      "fields_pattern": ["marketType", "bettingType", "name"]
+    },
+    "Market Economics": {
+      "icon": "💰",
+      "color": "#F97316",
+      "description": "Commission and financial parameters",
+      "fields_pattern": ["marketBaseRate", "eachWayDivisor"]
+    },
+    "Market Versioning": {
+      "icon": "🔢",
+      "color": "#78716C",
+      "description": "Version tracking for data consistency",
+      "fields_pattern": ["version"]
+    },
+    "Runner Identity": {
+      "icon": "🏇",
+      "color": "#06B6D4",
+      "description": "Selection/runner identification",
+      "fields_pattern": ["runners", "runners[].id", "runners[].name", "rc[].id"]
+    },
+    "Runner State": {
+      "icon": "🎯",
+      "color": "#84CC16",
+      "description": "Current runner status and conditions",
+      "fields_pattern": ["runners[].status", "runners[].adjustmentFactor", "runners[].removalDate"]
+    },
+    "Runner Attributes": {
+      "icon": "📈",
+      "color": "#A855F7",
+      "description": "Runner characteristics and metadata",
+      "fields_pattern": ["runners[].sortPriority", "runners[].hc"]
+    },
+    "Price - Core": {
+      "icon": "💲",
+      "color": "#22C55E",
+      "description": "Primary price indicators",
+      "fields_pattern": ["ltp", "runners[].bsp"]
+    },
+    "Volume": {
+      "icon": "📊",
+      "color": "#0EA5E9",
+      "description": "Trading volume metrics",
+      "fields_pattern": ["tv", "mc[].tv", "rc[].tv"]
+    },
+    "Order Book - Back": {
+      "icon": "📗",
+      "color": "#16A34A",
+      "description": "Back side order book depth",
+      "fields_pattern": ["batb", "bdatb", "atb"]
+    },
+    "Order Book - Lay": {
+      "icon": "📕",
+      "color": "#DC2626",
+      "description": "Lay side order book depth",
+      "fields_pattern": ["batl", "bdatl", "atl"]
+    },
+    "Trade History": {
+      "icon": "📜",
+      "color": "#7C3AED",
+      "description": "Historical trade data at each price level",
+      "fields_pattern": ["trd"]
+    },
+    "Starting Price": {
+      "icon": "🏁",
+      "color": "#EA580C",
+      "description": "Betfair Starting Price projections and final values",
+      "fields_pattern": ["spn", "spf", "spb", "spl", "bsp"]
+    },
+    "Market Data Container": {
+      "icon": "📦",
+      "color": "#64748B",
+      "description": "Container arrays for market and runner data",
+      "fields_pattern": ["mc", "rc", "marketDefinition"]
+    }
+  },
+  
+  "category_priority": [
+    "Message Metadata",
+    "Market Identity",
+    "Event Identity",
+    "Event Location",
+    "Event Timing",
+    "Market State",
+    "Market Type",
+    "Market Structure",
+    "Market Features",
+    "Market Economics",
+    "Market Versioning",
+    "Runner Identity",
+    "Runner State",
+    "Runner Attributes",
+    "Price - Core",
+    "Volume",
+    "Order Book - Back",
+    "Order Book - Lay",
+    "Trade History",
+    "Starting Price",
+    "Market Data Container"
+  ]
+}

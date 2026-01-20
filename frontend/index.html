@@ -18,6 +18,13 @@
             margin-bottom: 1.5rem;
         }
         
+        /* Category grid */
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+        
         .session-info {
             flex: 1;
         }
@@ -251,13 +258,14 @@
                 <span class="title-gradient">CHIMERA</span>
                 Analysis Console
             </h1>
-            <p class="subtitle">Dynamic Field Discovery for Heterogeneous Betfair Data • v2.1</p>
+            <p class="subtitle">Dynamic Field Discovery for Heterogeneous Betfair Data • v2.2</p>
         </header>
         
         <!-- Navigation -->
         <nav class="nav-bar">
             <button class="nav-btn active" data-page="analyze">🔍 Analyze</button>
             <button class="nav-btn" data-page="sessions">📁 Sessions</button>
+            <button class="nav-btn" data-page="plugins">🔌 Plugins</button>
         </nav>
         
         <!-- Analyze Page -->
@@ -273,6 +281,15 @@
                         placeholder="gs://your-bucket/dataflow-output/"
                         value=""
                     >
+                </div>
+                <div class="input-group">
+                    <label for="pluginSelect">Field Definition Plugin</label>
+                    <select id="pluginSelect">
+                        <option value="betfair" selected>Betfair Exchange Stream API</option>
+                    </select>
+                    <p class="hint" style="margin-top: 0.5rem;">
+                        Select the plugin that matches your data source for accurate field mappings.
+                    </p>
                 </div>
                 <button id="analyzeBtn" class="btn btn-primary">
                     🔍 Discover & Analyze
@@ -301,6 +318,9 @@
                         <button class="copy-btn" onclick="copySessionId()">📋 Copy</button>
                     </div>
                     <div class="source-url" id="currentSourceUrl">-</div>
+                    <div class="plugin-info" style="margin-top: 4px; font-size: 0.85rem; color: rgba(255,255,255,0.5);">
+                        Plugin: <span id="currentPluginId">betfair</span>
+                    </div>
                 </div>
                 <button class="btn btn-secondary btn-sm" onclick="exportCurrentSession()">
                     📤 Export
@@ -386,6 +406,33 @@
                 <div id="sessionsList"></div>
             </section>
         </div>
+        
+        <!-- Plugins Page -->
+        <div id="pluginsPage" class="page">
+            <section class="card">
+                <h2>🔌 Plugin System</h2>
+                <p style="margin-bottom: 1.5rem; color: rgba(255,255,255,0.7);">
+                    Plugins provide field definitions, categories, ML recommendations, and BigQuery schema configurations
+                    for different data providers. The system loads plugins from GCS or local storage.
+                </p>
+                <div id="pluginStatus" class="plugin-status"></div>
+            </section>
+            
+            <section class="card" id="activePluginSection" style="display: none;">
+                <h2>📖 Active Plugin: <span id="activePluginName">-</span></h2>
+                <div id="activePluginDetails"></div>
+            </section>
+            
+            <section class="card" id="pluginCategoriesSection" style="display: none;">
+                <h2>🏷️ Field Categories</h2>
+                <div id="pluginCategories" class="category-grid"></div>
+            </section>
+            
+            <section class="card" id="pluginMLSection" style="display: none;">
+                <h2>🧠 ML Model Recommendations</h2>
+                <div id="pluginML"></div>
+            </section>
+        </div>
     </div>
     
     <!-- Delete Confirmation Modal -->
@@ -413,10 +460,13 @@
         let currentSessionId = null;
         let currentSourceUrl = null;
         let currentResult = null;
+        let currentPluginId = 'betfair';
         let sessionsToDelete = [];
+        let pluginsLoaded = false;
         
         // DOM Elements
         const bucketUrlInput = document.getElementById('bucketUrl');
+        const pluginSelect = document.getElementById('pluginSelect');
         const analyzeBtn = document.getElementById('analyzeBtn');
         const progressSection = document.getElementById('progressSection');
         const progressFill = document.getElementById('progressFill');
@@ -424,6 +474,39 @@
         const sessionBanner = document.getElementById('sessionBanner');
         const resultsSection = document.getElementById('resultsSection');
         const rawSection = document.getElementById('rawSection');
+        
+        // Load plugins on startup
+        async function loadPlugins() {
+            try {
+                const response = await fetch(`${API_BASE}/plugins`);
+                const data = await response.json();
+                
+                if (data.plugins_enabled && data.plugins && data.plugins.length > 0) {
+                    pluginSelect.innerHTML = '';
+                    data.plugins.forEach(plugin => {
+                        const option = document.createElement('option');
+                        option.value = plugin.plugin_id;
+                        option.textContent = `${plugin.name} (v${plugin.version})`;
+                        if (plugin.plugin_id === data.active_plugin) {
+                            option.selected = true;
+                            currentPluginId = plugin.plugin_id;
+                        }
+                        pluginSelect.appendChild(option);
+                    });
+                    pluginsLoaded = true;
+                }
+            } catch (e) {
+                console.log('Could not load plugins, using default');
+            }
+        }
+        
+        // Initialize
+        loadPlugins();
+        
+        // Plugin selection change
+        pluginSelect.addEventListener('change', () => {
+            currentPluginId = pluginSelect.value;
+        });
         
         // Navigation
         document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -435,9 +518,104 @@
                 
                 if (btn.dataset.page === 'sessions') {
                     loadSessions();
+                } else if (btn.dataset.page === 'plugins') {
+                    loadPluginDetails();
                 }
             });
         });
+        
+        // Load plugin details for the Plugins page
+        async function loadPluginDetails() {
+            const statusDiv = document.getElementById('pluginStatus');
+            
+            try {
+                // Get system status
+                const response = await fetch(`${API_BASE}/`);
+                const data = await response.json();
+                
+                statusDiv.innerHTML = `
+                    <div class="status-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                        <div class="status-item" style="padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                            <div style="font-size: 0.85rem; color: rgba(255,255,255,0.6);">Plugin System</div>
+                            <div style="font-size: 1.2rem; font-weight: 600; color: ${data.plugin_system ? '#4ADE80' : '#F87171'}">
+                                ${data.plugin_system ? '✓ Enabled' : '✗ Disabled'}
+                            </div>
+                        </div>
+                        <div class="status-item" style="padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                            <div style="font-size: 0.85rem; color: rgba(255,255,255,0.6);">Active Plugin</div>
+                            <div style="font-size: 1.2rem; font-weight: 600; color: #67E8F9">${data.active_plugin}</div>
+                        </div>
+                        <div class="status-item" style="padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                            <div style="font-size: 0.85rem; color: rgba(255,255,255,0.6);">API Version</div>
+                            <div style="font-size: 1.2rem; font-weight: 600; color: #A78BFA">${data.version}</div>
+                        </div>
+                    </div>
+                `;
+                
+                if (data.plugin_system) {
+                    // Load active plugin details
+                    const pluginResp = await fetch(`${API_BASE}/plugins/${data.active_plugin}`);
+                    const pluginData = await pluginResp.json();
+                    
+                    document.getElementById('activePluginSection').style.display = 'block';
+                    document.getElementById('activePluginName').textContent = pluginData.name;
+                    document.getElementById('activePluginDetails').innerHTML = `
+                        <div class="plugin-meta" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                            <div><strong>Version:</strong> ${pluginData.version}</div>
+                            <div><strong>Fields:</strong> ${pluginData.field_count}</div>
+                            <div><strong>Categories:</strong> ${pluginData.category_count}</div>
+                        </div>
+                        <p style="color: rgba(255,255,255,0.7);">${pluginData.description}</p>
+                    `;
+                    
+                    // Load categories
+                    const catResp = await fetch(`${API_BASE}/plugins/${data.active_plugin}/categories`);
+                    const catData = await catResp.json();
+                    
+                    document.getElementById('pluginCategoriesSection').style.display = 'block';
+                    const catGrid = document.getElementById('pluginCategories');
+                    catGrid.innerHTML = '';
+                    
+                    Object.entries(catData.categories).forEach(([name, cat]) => {
+                        const div = document.createElement('div');
+                        div.className = 'category-card';
+                        div.style.cssText = 'padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid ' + (cat.color || '#6B7280');
+                        div.innerHTML = `
+                            <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">${cat.icon || '📁'} ${name}</div>
+                            <div style="font-size: 0.85rem; color: rgba(255,255,255,0.6);">${cat.description || ''}</div>
+                        `;
+                        catGrid.appendChild(div);
+                    });
+                    
+                    // Load ML recommendations
+                    const mlResp = await fetch(`${API_BASE}/plugins/${data.active_plugin}/ml`);
+                    const mlData = await mlResp.json();
+                    
+                    document.getElementById('pluginMLSection').style.display = 'block';
+                    const mlDiv = document.getElementById('pluginML');
+                    mlDiv.innerHTML = '';
+                    
+                    Object.entries(mlData.models || {}).forEach(([name, model]) => {
+                        const card = document.createElement('div');
+                        card.className = 'ml-card';
+                        card.style.cssText = 'padding: 1.25rem; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 1rem;';
+                        card.innerHTML = `
+                            <h4 style="margin: 0 0 0.5rem 0; color: #67E8F9;">${model.name || name}</h4>
+                            <div style="font-size: 0.9rem; color: rgba(255,255,255,0.7); margin-bottom: 0.75rem;">
+                                ${model.architecture || 'N/A'}
+                            </div>
+                            <p style="margin: 0; color: rgba(255,255,255,0.6); font-size: 0.85rem;">
+                                ${model.description || ''}
+                            </p>
+                            ${model.reference ? `<div style="margin-top: 0.5rem; font-size: 0.8rem; color: #A78BFA;">📚 ${model.reference}</div>` : ''}
+                        `;
+                        mlDiv.appendChild(card);
+                    });
+                }
+            } catch (e) {
+                statusDiv.innerHTML = `<div style="color: #F87171;">Error loading plugin information: ${e.message}</div>`;
+            }
+        }
         
         // Tab switching
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -478,6 +656,7 @@
                 return;
             }
             
+            currentPluginId = pluginSelect.value;
             currentSourceUrl = bucketUrl;
             progressSection.style.display = 'block';
             sessionBanner.style.display = 'none';
@@ -489,13 +668,18 @@
                 const response = await fetch(`${API_BASE}/analyze`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bucket_url: bucketUrl, create_session: true })
+                    body: JSON.stringify({ 
+                        bucket_url: bucketUrl, 
+                        create_session: true,
+                        plugin_id: currentPluginId 
+                    })
                 });
                 
                 const data = await response.json();
                 
                 if (data.job_id) {
                     currentSessionId = data.session_id;
+                    currentPluginId = data.plugin_id || currentPluginId;
                     pollStatus(data.job_id);
                 } else {
                     throw new Error(data.detail || 'Failed to start analysis');
@@ -521,7 +705,7 @@
                 
                 if (data.status === 'complete') {
                     currentResult = data.result;
-                    displaySessionInfo(currentSessionId, data.source_url || currentSourceUrl);
+                    displaySessionInfo(currentSessionId, data.source_url || currentSourceUrl, data.plugin_id || currentPluginId);
                     displayResults(data.result);
                     analyzeBtn.disabled = false;
                 } else if (data.status === 'error') {
@@ -537,9 +721,10 @@
         }
         
         // Display session info banner
-        function displaySessionInfo(sessionId, sourceUrl) {
+        function displaySessionInfo(sessionId, sourceUrl, pluginId) {
             document.getElementById('currentSessionId').textContent = sessionId || 'N/A';
             document.getElementById('currentSourceUrl').textContent = sourceUrl || 'N/A';
+            document.getElementById('currentPluginId').textContent = pluginId || 'betfair';
             sessionBanner.style.display = 'flex';
         }
         

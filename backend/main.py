@@ -1,9 +1,10 @@
 """
-CHIMERA Analysis API v3.0
+CHIMERA Analysis API v2.2
 
 FastAPI backend for dynamic Betfair data analysis.
 Supports both direct analysis and Cloud Batch for large datasets.
 Includes session management for persistent storage and BigQuery integration.
+Now with plugin system for external field definitions.
 """
 
 import os
@@ -18,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 
-from analyzer import analyze_records, load_records_from_gcs, stream_progress, stream_result, stream_error
+from analyzer import analyze_records, load_records_from_gcs, stream_progress, stream_result, stream_error, ACTIVE_PLUGIN, USE_PLUGINS
 from session_manager import (
     generate_session_id,
     save_session,
@@ -31,11 +32,23 @@ from session_manager import (
     get_session_for_bigquery,
 )
 
+# Import plugin system if available
+if USE_PLUGINS:
+    from plugin_loader import (
+        load_plugin,
+        list_available_plugins,
+        get_all_categories,
+        get_ml_recommendations,
+        get_bigquery_config,
+        get_derived_features,
+        get_validation_rules,
+    )
+
 # Initialize FastAPI
 app = FastAPI(
     title="CHIMERA Analysis API",
-    description="Dynamic field discovery for heterogeneous Betfair data with session management",
-    version="3.0.0"
+    description="Dynamic field discovery for heterogeneous Betfair data with plugin-based field definitions",
+    version="2.2.0"
 )
 
 # CORS configuration
@@ -60,6 +73,7 @@ class AnalyzeRequest(BaseModel):
     bucket_url: str
     use_batch: bool = False  # Use Cloud Batch for large datasets
     create_session: bool = True  # Auto-create session with results
+    plugin_id: Optional[str] = None  # Plugin to use (default: betfair)
 
 
 class DeleteSessionsRequest(BaseModel):
@@ -85,13 +99,16 @@ async def root():
     """Health check and API info."""
     return {
         "service": "CHIMERA Analysis API",
-        "version": "3.0.0",
+        "version": "2.2.0",
         "status": "healthy",
+        "plugin_system": USE_PLUGINS,
+        "active_plugin": ACTIVE_PLUGIN if USE_PLUGINS else "legacy",
         "features": [
             "Dynamic field discovery",
+            "Plugin-based field definitions",
             "No hardcoded assumptions",
             "Human-readable field names",
-            "ML model suggestions",
+            "ML model suggestions (from plugins)",
             "BigQuery schema recommendations",
             "Session management",
             "Export & persistence"
@@ -105,6 +122,151 @@ async def health():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 
+# ============================================================================
+# PLUGIN MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/plugins")
+async def get_plugins():
+    """List all available plugins."""
+    if not USE_PLUGINS:
+        return {
+            "plugins_enabled": False,
+            "message": "Plugin system not available, using legacy betfair_dictionary",
+            "plugins": []
+        }
+    
+    try:
+        plugins = list_available_plugins()
+        return {
+            "plugins_enabled": True,
+            "active_plugin": ACTIVE_PLUGIN,
+            "plugins": plugins
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing plugins: {str(e)}")
+
+
+@app.get("/plugins/{plugin_id}")
+async def get_plugin_details(plugin_id: str):
+    """Get detailed information about a specific plugin."""
+    if not USE_PLUGINS:
+        raise HTTPException(status_code=400, detail="Plugin system not available")
+    
+    try:
+        plugin = load_plugin(plugin_id)
+        return {
+            "plugin_id": plugin.plugin_id,
+            "name": plugin.name,
+            "version": plugin.version,
+            "description": plugin.description,
+            "field_count": len(plugin.fields),
+            "category_count": len(plugin.categories),
+            "categories": list(plugin.categories.keys()),
+            "has_ml_recommendations": bool(plugin.ml_recommendations),
+            "has_bigquery_config": bool(plugin.bigquery_config),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {str(e)}")
+
+
+@app.get("/plugins/{plugin_id}/fields")
+async def get_plugin_fields(plugin_id: str):
+    """Get all field definitions from a plugin."""
+    if not USE_PLUGINS:
+        raise HTTPException(status_code=400, detail="Plugin system not available")
+    
+    try:
+        plugin = load_plugin(plugin_id)
+        fields = {}
+        for key, field_def in plugin.fields.items():
+            fields[key] = {
+                "full_name": field_def.full_name,
+                "type": field_def.type,
+                "category": field_def.category,
+                "description": field_def.description,
+                "ml_relevance": field_def.ml_relevance,
+            }
+        return {
+            "plugin_id": plugin_id,
+            "field_count": len(fields),
+            "fields": fields
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {str(e)}")
+
+
+@app.get("/plugins/{plugin_id}/categories")
+async def get_plugin_categories(plugin_id: str):
+    """Get all category definitions from a plugin."""
+    if not USE_PLUGINS:
+        raise HTTPException(status_code=400, detail="Plugin system not available")
+    
+    try:
+        categories = get_all_categories(plugin_id)
+        return {
+            "plugin_id": plugin_id,
+            "category_count": len(categories),
+            "categories": categories
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {str(e)}")
+
+
+@app.get("/plugins/{plugin_id}/ml")
+async def get_plugin_ml_recommendations(plugin_id: str):
+    """Get ML model recommendations from a plugin."""
+    if not USE_PLUGINS:
+        raise HTTPException(status_code=400, detail="Plugin system not available")
+    
+    try:
+        ml_recs = get_ml_recommendations(plugin_id)
+        derived = get_derived_features(plugin_id)
+        return {
+            "plugin_id": plugin_id,
+            "models": ml_recs,
+            "derived_features": derived
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {str(e)}")
+
+
+@app.get("/plugins/{plugin_id}/bigquery")
+async def get_plugin_bigquery_config(plugin_id: str):
+    """Get BigQuery schema recommendations from a plugin."""
+    if not USE_PLUGINS:
+        raise HTTPException(status_code=400, detail="Plugin system not available")
+    
+    try:
+        bq_config = get_bigquery_config(plugin_id)
+        return {
+            "plugin_id": plugin_id,
+            "config": bq_config
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {str(e)}")
+
+
+@app.get("/plugins/{plugin_id}/validation")
+async def get_plugin_validation_rules(plugin_id: str):
+    """Get validation rules from a plugin."""
+    if not USE_PLUGINS:
+        raise HTTPException(status_code=400, detail="Plugin system not available")
+    
+    try:
+        validation = get_validation_rules(plugin_id)
+        return {
+            "plugin_id": plugin_id,
+            "rules": validation
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {str(e)}")
+
+
+# ============================================================================
+# ANALYSIS ENDPOINTS
+# ============================================================================
+
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     """
@@ -114,9 +276,12 @@ async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     For large datasets, use use_batch=True to run on Cloud Batch.
     
     If create_session=True (default), a session will be created with the results.
+    
+    Optionally specify plugin_id to use a specific plugin for field definitions.
     """
     job_id = f"job-{uuid.uuid4().hex[:12]}"
     session_id = generate_session_id() if request.create_session else None
+    plugin_id = request.plugin_id or ACTIVE_PLUGIN
     
     # Initialize job status
     job_status[job_id] = {
@@ -127,6 +292,7 @@ async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
         "started_at": datetime.utcnow().isoformat(),
         "create_session": request.create_session,
         "session_id": session_id,
+        "plugin_id": plugin_id,
     }
     
     if request.use_batch:
@@ -154,27 +320,32 @@ async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
             job_id, 
             request.bucket_url, 
             request.create_session,
-            session_id
+            session_id,
+            plugin_id
         )
         
         return {
             "type": "submitted",
             "job_id": job_id,
             "session_id": session_id,
+            "plugin_id": plugin_id,
             "message": "Analysis started",
             "status_url": f"/status/{job_id}"
         }
 
 
-async def run_analysis_task(job_id: str, bucket_url: str, create_session: bool = True, session_id: str = None):
+async def run_analysis_task(job_id: str, bucket_url: str, create_session: bool = True, session_id: str = None, plugin_id: str = None):
     """Background task to run analysis and optionally create a session."""
     try:
+        if plugin_id is None:
+            plugin_id = ACTIVE_PLUGIN
+            
         job_status[job_id]["status"] = "running"
-        job_status[job_id]["message"] = "Loading data..."
+        job_status[job_id]["message"] = f"Loading data (using plugin: {plugin_id})..."
         job_status[job_id]["progress"] = 10
         
-        # Run analysis
-        result = analyze_records(bucket_url=bucket_url)
+        # Run analysis with plugin
+        result = analyze_records(bucket_url=bucket_url, plugin_id=plugin_id)
         
         # Create session if requested
         if create_session and session_id:
@@ -256,9 +427,11 @@ async def analyze_stream(request: AnalyzeRequest):
     Stream analysis results as they're computed.
     Returns Server-Sent Events with progress updates.
     """
+    plugin_id = request.plugin_id or ACTIVE_PLUGIN
+    
     async def generate():
         try:
-            yield f"data: {stream_progress('Starting analysis...', 0)}\n\n"
+            yield f"data: {stream_progress(f'Starting analysis with plugin: {plugin_id}...', 0)}\n\n"
             
             yield f"data: {stream_progress('Loading data from GCS...', 10)}\n\n"
             
@@ -269,8 +442,8 @@ async def analyze_stream(request: AnalyzeRequest):
             
             yield f"data: {stream_progress('Discovering fields...', 40)}\n\n"
             
-            # Run analysis
-            result = analyze_records(records=records)
+            # Run analysis with plugin
+            result = analyze_records(records=records, plugin_id=plugin_id)
             
             yield f"data: {stream_progress('Analysis complete!', 100)}\n\n"
             
@@ -290,22 +463,51 @@ async def analyze_stream(request: AnalyzeRequest):
 
 
 @app.get("/field-dictionary")
-async def get_field_dictionary():
-    """Get the complete Betfair field dictionary."""
-    from betfair_dictionary import get_all_known_fields, FIELD_CATEGORIES
-    
-    return {
-        "fields": get_all_known_fields(),
-        "categories": FIELD_CATEGORIES,
-    }
+async def get_field_dictionary(plugin_id: Optional[str] = None):
+    """Get the complete field dictionary from a plugin."""
+    if USE_PLUGINS:
+        pid = plugin_id or ACTIVE_PLUGIN
+        try:
+            plugin = load_plugin(pid)
+            fields = {}
+            for key, field_def in plugin.fields.items():
+                fields[key] = {
+                    "name": field_def.full_name,
+                    "type": field_def.type,
+                    "category": field_def.category,
+                    "description": field_def.description,
+                    "ml_relevance": field_def.ml_relevance,
+                }
+            categories = get_all_categories(pid)
+            
+            return {
+                "plugin_id": pid,
+                "fields": fields,
+                "categories": categories,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error loading plugin: {str(e)}")
+    else:
+        # Legacy mode
+        from betfair_dictionary import get_all_known_fields, FIELD_CATEGORIES
+        return {
+            "plugin_id": "legacy",
+            "fields": get_all_known_fields(),
+            "categories": FIELD_CATEGORIES,
+        }
 
 
 @app.get("/field/{field_name}")
-async def get_field_info(field_name: str, context: Optional[str] = None):
+async def get_single_field_info(field_name: str, context: Optional[str] = None, plugin_id: Optional[str] = None):
     """Get information about a specific field."""
-    from betfair_dictionary import get_field_info as get_info
+    if USE_PLUGINS:
+        from plugin_loader import get_field_info as plugin_get_field_info
+        pid = plugin_id or ACTIVE_PLUGIN
+        info = plugin_get_field_info(field_name, pid, context)
+    else:
+        from betfair_dictionary import get_field_info as dict_get_field_info
+        info = dict_get_field_info(field_name, context)
     
-    info = get_info(field_name, context)
     return {
         "field": field_name,
         "context": context,

@@ -1,0 +1,205 @@
+{
+  "_metadata": {
+    "description": "BigQuery schema recommendations for Betfair Exchange data",
+    "version": "1.0.0"
+  },
+
+  "general_recommendations": {
+    "timestamp_handling": {
+      "field": "pt",
+      "source_type": "Unix milliseconds (INTEGER)",
+      "target_type": "TIMESTAMP",
+      "conversion_sql": "TIMESTAMP_MILLIS(pt) AS publish_timestamp",
+      "reason": "Native time-series functions, partition support"
+    },
+    
+    "partitioning": {
+      "recommendation": "Partition by DATE(publish_timestamp)",
+      "reason": "Efficient queries by racing day, automatic pruning",
+      "alternative": "PARTITION BY DATE(TIMESTAMP_MILLIS(pt))"
+    },
+    
+    "clustering": {
+      "recommendation": "Cluster by market_id",
+      "reason": "Fast per-market aggregations, common query pattern",
+      "secondary": "Cluster by venue, eventTypeId for analytics queries"
+    }
+  },
+
+  "order_book_flattening": {
+    "description": "Flatten array fields for SQL accessibility",
+    "strategy": "Create separate columns for each depth level",
+    
+    "batb_schema": {
+      "batb_0_price": {"type": "FLOAT64", "description": "Best back price (level 0)"},
+      "batb_0_size": {"type": "FLOAT64", "description": "Size at best back"},
+      "batb_1_price": {"type": "FLOAT64", "description": "2nd best back price"},
+      "batb_1_size": {"type": "FLOAT64", "description": "Size at 2nd best back"},
+      "batb_2_price": {"type": "FLOAT64", "description": "3rd best back price"},
+      "batb_2_size": {"type": "FLOAT64", "description": "Size at 3rd best back"}
+    },
+    
+    "batl_schema": {
+      "batl_0_price": {"type": "FLOAT64", "description": "Best lay price (level 0)"},
+      "batl_0_size": {"type": "FLOAT64", "description": "Size at best lay"},
+      "batl_1_price": {"type": "FLOAT64", "description": "2nd best lay price"},
+      "batl_1_size": {"type": "FLOAT64", "description": "Size at 2nd best lay"},
+      "batl_2_price": {"type": "FLOAT64", "description": "3rd best lay price"},
+      "batl_2_size": {"type": "FLOAT64", "description": "Size at 3rd best lay"}
+    },
+    
+    "alternative": {
+      "method": "Keep as JSON/ARRAY",
+      "type": "JSON or ARRAY<STRUCT<level INT64, price FLOAT64, size FLOAT64>>",
+      "pros": "Preserves full depth, flexible",
+      "cons": "Requires UNNEST for queries, slower for simple lookups"
+    }
+  },
+
+  "schema_profiles": {
+    "premium_full_depth": {
+      "name": "Premium Festival Racing",
+      "description": "Full depth schema for data-rich sessions",
+      "use_case": "Cheltenham, Royal Ascot, major meetings",
+      "estimated_columns": 120,
+      "includes": [
+        "All message metadata fields",
+        "Full market definition",
+        "6 levels of batb/batl (flattened)",
+        "Full trd ladder as JSON",
+        "All runner attributes",
+        "Starting price fields"
+      ],
+      "schema": [
+        {"name": "publish_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED"},
+        {"name": "market_id", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "selection_id", "type": "INT64", "mode": "REQUIRED"},
+        {"name": "ltp", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "tv", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batb_0_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batb_0_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batb_1_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batb_1_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batb_2_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batb_2_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batl_0_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batl_0_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batl_1_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batl_1_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batl_2_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "batl_2_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "trd", "type": "JSON", "mode": "NULLABLE"},
+        {"name": "spn", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "spf", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "venue", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "market_type", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "market_time", "type": "TIMESTAMP", "mode": "NULLABLE"},
+        {"name": "in_play", "type": "BOOL", "mode": "NULLABLE"},
+        {"name": "num_active_runners", "type": "INT64", "mode": "NULLABLE"},
+        {"name": "runner_name", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "runner_status", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "adjustment_factor", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "bsp", "type": "FLOAT64", "mode": "NULLABLE"}
+      ]
+    },
+
+    "inplay_specialist": {
+      "name": "In-Play Specialist",
+      "description": "Price movement focus for in-play analysis",
+      "use_case": "Markets with significant in-play activity",
+      "estimated_columns": 60,
+      "includes": [
+        "Core timing fields",
+        "Price fields (ltp, tv)",
+        "3 levels of batb/batl",
+        "Trade history",
+        "Minimal metadata"
+      ],
+      "focus_fields": ["ltp", "tv", "batb", "batl", "trd", "pt", "inPlay"]
+    },
+
+    "standard_lean": {
+      "name": "Standard Weekday Racing",
+      "description": "Lean schema for everyday racing",
+      "use_case": "Baseline activity, lower data richness",
+      "estimated_columns": 40,
+      "includes": [
+        "Essential timing",
+        "Core prices (ltp)",
+        "Volume (tv)",
+        "Best prices only (level 0)",
+        "Basic metadata"
+      ],
+      "schema": [
+        {"name": "publish_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED"},
+        {"name": "market_id", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "selection_id", "type": "INT64", "mode": "REQUIRED"},
+        {"name": "ltp", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "tv", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "best_back_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "best_back_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "best_lay_price", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "best_lay_size", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "venue", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "market_type", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "in_play", "type": "BOOL", "mode": "NULLABLE"}
+      ]
+    }
+  },
+
+  "field_type_mappings": {
+    "pt": {"source": "INTEGER (Unix ms)", "target": "TIMESTAMP"},
+    "ltp": {"source": "FLOAT", "target": "FLOAT64"},
+    "tv": {"source": "FLOAT", "target": "FLOAT64"},
+    "market_id": {"source": "STRING", "target": "STRING"},
+    "selection_id": {"source": "INTEGER", "target": "INT64"},
+    "venue": {"source": "STRING", "target": "STRING"},
+    "marketType": {"source": "STRING", "target": "STRING"},
+    "marketTime": {"source": "STRING (ISO)", "target": "TIMESTAMP"},
+    "inPlay": {"source": "BOOLEAN", "target": "BOOL"},
+    "numberOfActiveRunners": {"source": "INTEGER", "target": "INT64"},
+    "eventTypeId": {"source": "STRING", "target": "STRING"},
+    "batb": {"source": "ARRAY", "target": "FLOAT64 (flattened) or JSON"},
+    "batl": {"source": "ARRAY", "target": "FLOAT64 (flattened) or JSON"},
+    "trd": {"source": "ARRAY", "target": "JSON"},
+    "runners": {"source": "ARRAY", "target": "ARRAY<STRUCT> or separate table"}
+  },
+
+  "computed_columns": {
+    "description": "Useful computed columns to add during load",
+    "columns": {
+      "spread": {
+        "sql": "batl_0_price - batb_0_price",
+        "type": "FLOAT64",
+        "description": "Bid-ask spread"
+      },
+      "mid_price": {
+        "sql": "(batb_0_price + batl_0_price) / 2",
+        "type": "FLOAT64",
+        "description": "Mid-market price"
+      },
+      "time_to_off_seconds": {
+        "sql": "TIMESTAMP_DIFF(market_time, publish_timestamp, SECOND)",
+        "type": "INT64",
+        "description": "Seconds until race start"
+      },
+      "racing_date": {
+        "sql": "DATE(publish_timestamp)",
+        "type": "DATE",
+        "description": "Racing date for partitioning"
+      }
+    }
+  },
+
+  "views": {
+    "market_summary": {
+      "description": "Pre-aggregated market-level summary",
+      "sql_template": "CREATE VIEW market_summary AS SELECT market_id, venue, market_type, MIN(publish_timestamp) as first_update, MAX(publish_timestamp) as last_update, COUNT(*) as update_count, MAX(tv) as final_volume FROM streaming_data GROUP BY market_id, venue, market_type"
+    },
+    
+    "active_runners_with_metadata": {
+      "description": "Join streaming data with runner definitions",
+      "purpose": "Single source for runner-level features with static metadata"
+    }
+  }
+}

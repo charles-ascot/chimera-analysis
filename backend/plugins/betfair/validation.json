@@ -1,0 +1,171 @@
+{
+  "_metadata": {
+    "description": "Validation rules for Betfair Exchange Stream API data",
+    "version": "1.0.0"
+  },
+
+  "field_validations": {
+    "pt": {
+      "rule": "Must be 13-digit Unix millisecond timestamp",
+      "regex": "^[0-9]{13}$",
+      "type_check": "integer",
+      "range": [1000000000000, 9999999999999],
+      "severity": "CRITICAL",
+      "error_indicators": ["L", "P", "MOC", "string value"],
+      "error_message": "pt field appears to contain Persistence Type values instead of Unix timestamps"
+    },
+    
+    "mc[].id": {
+      "rule": "Must match Betfair market ID format",
+      "regex": "^1\\.[0-9]+$",
+      "type_check": "string",
+      "severity": "HIGH",
+      "error_message": "Market ID does not match expected format 1.XXXXXXXXX"
+    },
+    
+    "rc[].id": {
+      "rule": "Must be positive integer",
+      "type_check": "integer",
+      "range": [1, null],
+      "severity": "HIGH",
+      "error_message": "Selection ID must be a positive integer"
+    },
+    
+    "ltp": {
+      "rule": "Must be valid Betfair odds",
+      "type_check": "float",
+      "range": [1.01, 1000],
+      "severity": "MEDIUM",
+      "error_message": "Last traded price outside valid Betfair odds range (1.01-1000)"
+    },
+    
+    "batb": {
+      "rule": "Must be array of [level, price, size] triples",
+      "type_check": "array",
+      "structure": {
+        "element_type": "array",
+        "element_length": 3,
+        "element_schema": ["integer", "float", "float"]
+      },
+      "severity": "HIGH"
+    },
+    
+    "batl": {
+      "rule": "Must be array of [level, price, size] triples",
+      "type_check": "array",
+      "structure": {
+        "element_type": "array",
+        "element_length": 3,
+        "element_schema": ["integer", "float", "float"]
+      },
+      "severity": "HIGH"
+    },
+    
+    "trd": {
+      "rule": "Must be array of [price, size] tuples",
+      "type_check": "array",
+      "structure": {
+        "element_type": "array",
+        "element_length": 2,
+        "element_schema": ["float", "float"]
+      },
+      "severity": "MEDIUM"
+    },
+    
+    "tv": {
+      "rule": "Must be non-negative number",
+      "type_check": "float",
+      "range": [0, null],
+      "severity": "MEDIUM"
+    },
+    
+    "eventTypeId": {
+      "rule": "Should be known event type code",
+      "type_check": "string",
+      "known_values": ["1", "2", "4", "7", "4339", "6", "7522", "7524"],
+      "severity": "LOW",
+      "warn_on_unknown": true
+    },
+    
+    "marketType": {
+      "rule": "Should be known market type",
+      "type_check": "string",
+      "known_values": ["WIN", "PLACE", "EACH_WAY", "OTHER_PLACE", "WITHOUT_FAV", "MATCH_ODDS"],
+      "severity": "LOW",
+      "warn_on_unknown": true
+    },
+    
+    "status": {
+      "rule": "Must be valid market status",
+      "type_check": "string",
+      "known_values": ["OPEN", "SUSPENDED", "CLOSED"],
+      "contexts": ["marketDefinition"],
+      "severity": "MEDIUM"
+    },
+    
+    "runners[].status": {
+      "rule": "Must be valid runner status",
+      "type_check": "string",
+      "known_values": ["ACTIVE", "WINNER", "LOSER", "REMOVED", "REMOVED_VACANT", "HIDDEN", "PLACED"],
+      "severity": "MEDIUM"
+    }
+  },
+
+  "data_quality_checks": {
+    "check_image_flag": {
+      "description": "Verify img flag is present for snapshot detection",
+      "fields": ["img"],
+      "importance": "HIGH",
+      "reason": "Essential for distinguishing full snapshots from delta updates"
+    },
+    
+    "check_conflation": {
+      "description": "Flag records with con=true for potential data quality issues",
+      "fields": ["con"],
+      "importance": "MEDIUM",
+      "reason": "Conflated records may have lost granularity"
+    },
+    
+    "check_stream_status": {
+      "description": "Filter records with status=503 for latency issues",
+      "fields": ["status"],
+      "importance": "HIGH",
+      "reason": "Status 503 indicates stream may be delayed or incomplete"
+    },
+    
+    "check_temporal_order": {
+      "description": "Verify pt timestamps are in ascending order within session",
+      "fields": ["pt"],
+      "importance": "HIGH",
+      "reason": "Out-of-order timestamps break time-series analysis"
+    }
+  },
+
+  "common_issues": {
+    "pt_misidentification": {
+      "symptom": "pt field described as Persistence Type",
+      "sample_bad_description": "L=Lapse, P=Persist, MOC=Market On Close",
+      "actual_meaning": "publishTime - Unix milliseconds timestamp",
+      "detection": "Sample values are 13-digit numbers like 1454674167270",
+      "severity": "CRITICAL"
+    },
+    
+    "marketDefinition_name_confusion": {
+      "symptom": "marketDefinition.name labeled as Runner Name",
+      "actual_meaning": "Market name (e.g., '2m4f Grd1 Hrd')",
+      "correct_field_for_runner": "runners[].name",
+      "severity": "MEDIUM"
+    },
+    
+    "eventTypeId_unknown": {
+      "symptom": "eventTypeId categorized as Unknown",
+      "actual_category": "Event Identity",
+      "known_values": {
+        "7": "Horse Racing",
+        "1": "Football",
+        "4339": "Greyhounds"
+      },
+      "severity": "LOW"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "plugin_id": "betfair-exchange-stream",
+  "name": "Betfair Exchange Stream API",
+  "version": "1.0.0",
+  "description": "Field definitions for Betfair Exchange Stream API (ADVANCED tier historical data)",
+  "author": "PROJECT CHIMERA",
+  "created": "2026-01-20",
+  "updated": "2026-01-20",
+  "source": "Official Betfair Exchange Stream API Documentation",
+  "data_tier": "ADVANCED",
+  "provider": {
+    "name": "Betfair",
+    "website": "https://www.betfair.com",
+    "api_docs": "https://docs.developer.betfair.com/display/1smk3cen4v3lu3yomq5qye0ni/Exchange+Stream+API"
+  },
+  "files": {
+    "fields": "fields.json",
+    "categories": "categories.json",
+    "validation": "validation.json",
+    "ml_recommendations": "ml_recommendations.json",
+    "bigquery": "bigquery.json"
+  },
+  "compatibility": {
+    "chimera_analyzer": ">=2.0.0",
+    "data_formats": ["ndjson", "json"]
+  }
+}

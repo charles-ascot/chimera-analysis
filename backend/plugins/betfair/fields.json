@@ -1,0 +1,799 @@
+{
+  "_metadata": {
+    "description": "Betfair Exchange Stream API Field Definitions",
+    "version": "1.0.0",
+    "source": "Official Betfair API Documentation",
+    "last_updated": "2026-01-20"
+  },
+
+  "fields": {
+    "op": {
+      "full_name": "Operation Type",
+      "type": "string",
+      "category": "Message Metadata",
+      "description": "Identifies the message type for routing processing logic",
+      "values": {
+        "mcm": "MarketChangeMessage - contains price/market changes",
+        "ocm": "OrderChangeMessage - contains order updates",
+        "connection": "ConnectionMessage - received on successful connection",
+        "status": "StatusMessage - subscription confirmation"
+      },
+      "required": true,
+      "ml_relevance": "low",
+      "ml_notes": "Routing field only - not used in models"
+    },
+
+    "pt": {
+      "full_name": "Publish Time",
+      "type": "integer",
+      "category": "Message Metadata",
+      "description": "Unix timestamp in milliseconds when Betfair sent the message. CRITICAL: This is NOT persistence type. Essential for latency analysis, time-series ordering, and calculating time-to-event.",
+      "format": "Unix epoch milliseconds (e.g., 1454674167270 = 2016-02-05T13:29:27.270Z)",
+      "required": true,
+      "ml_relevance": "critical",
+      "ml_notes": "Required for temporal features, time-series modeling, and time-to-off calculations",
+      "common_errors": {
+        "misidentification": "Often confused with Persistence Type (L=Lapse, P=Persist, MOC=Market On Close)",
+        "validation": "Value should be 13-digit number representing Unix milliseconds"
+      },
+      "bigquery": {
+        "recommended_type": "TIMESTAMP",
+        "conversion": "TIMESTAMP_MILLIS(pt)"
+      }
+    },
+
+    "clk": {
+      "full_name": "Clock Token",
+      "type": "string",
+      "category": "Message Metadata",
+      "description": "Sequence token for message ordering and recovery. Store this value - if disconnected, supply it with identical subscription criteria to receive delta updates instead of full image.",
+      "required": true,
+      "ml_relevance": "low",
+      "ml_notes": "Infrastructure field for reconnection - not used in models"
+    },
+
+    "initialClk": {
+      "full_name": "Initial Clock Token",
+      "type": "string",
+      "category": "Message Metadata",
+      "description": "Initial sequence token provided at subscription start. Used together with clk for faster recovery after disconnection.",
+      "required": false,
+      "ml_relevance": "none"
+    },
+
+    "ct": {
+      "full_name": "Change Type",
+      "type": "string",
+      "category": "Message Metadata",
+      "description": "Identifies the type of change being delivered",
+      "values": {
+        "SUB_IMAGE": "Initial image from subscription - replace local cache entirely",
+        "RESUB_DELTA": "Patch from resubscription - apply as delta",
+        "HEARTBEAT": "Keep-alive message with no data changes",
+        "null": "Standard update - apply as delta to cache"
+      },
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Useful for data quality filtering - filter out HEARTBEAT for training"
+    },
+
+    "img": {
+      "full_name": "Image Flag",
+      "type": "boolean",
+      "category": "Message Metadata",
+      "description": "If true, replace existing cache with this data (full snapshot). If null/false, apply as delta to existing cache. Critical for correct state reconstruction.",
+      "required": false,
+      "default": false,
+      "ml_relevance": "high",
+      "ml_notes": "Essential for correct feature engineering - must distinguish snapshots from deltas for cache building"
+    },
+
+    "con": {
+      "full_name": "Conflated Flag",
+      "type": "boolean",
+      "category": "Message Metadata",
+      "description": "If true, multiple updates were combined in this message due to client buffer delay or conflateMs setting. Important for understanding data granularity and potential information loss.",
+      "required": false,
+      "default": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Indicates potential data quality issues - consider filtering con=true for high-frequency models"
+    },
+
+    "status": {
+      "full_name": "Stream Status",
+      "type": "integer",
+      "category": "Message Metadata",
+      "description": "Stream health indicator. Null when data is up-to-date, 503 when experiencing latency issues.",
+      "values": {
+        "null": "Stream data is current and reliable",
+        "503": "Stream data may be delayed or incomplete"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Filter out status=503 records for reliable training data"
+    },
+
+    "segmentType": {
+      "full_name": "Segment Type",
+      "type": "string",
+      "category": "Message Metadata",
+      "description": "Identifies multi-part segmented messages for large payloads",
+      "values": {
+        "SEG_START": "Start of segmented message",
+        "SEG": "Middle part of segmented message",
+        "SEG_END": "Last part of segmented message",
+        "null": "Non-segmented message"
+      },
+      "required": false,
+      "ml_relevance": "none"
+    },
+
+    "mc": {
+      "full_name": "Market Changes",
+      "type": "array[object]",
+      "category": "Market Data Container",
+      "description": "Array of MarketChange objects containing changes for subscribed markets. Each element represents updates for a single market.",
+      "required": true,
+      "ml_relevance": "container",
+      "ml_notes": "Access child fields for actual data"
+    },
+
+    "id": {
+      "full_name": "Market ID",
+      "type": "string",
+      "category": "Market Identity",
+      "description": "Unique Betfair market identifier. Format: 1.XXXXXXXXX (e.g., 1.122930790). Links all runner data to a specific betting market.",
+      "format": "1.XXXXXXXXX",
+      "required": true,
+      "ml_relevance": "high",
+      "ml_notes": "Primary key for joining data and grouping by market",
+      "contexts": ["mc[]"]
+    },
+
+    "tv": {
+      "full_name": "Total Volume",
+      "type": "float",
+      "category": "Volume",
+      "description": "Total amount matched in GBP. At market level (mc[].tv): total across all runners. At runner level (rc[].tv): total for that selection. Truncated at 2 decimal places.",
+      "unit": "GBP",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Key liquidity indicator - useful for volume-weighted features and activity detection",
+      "filter_flag": "EX_TRADED_VOL",
+      "contexts": ["mc[]", "rc[]"]
+    },
+
+    "rc": {
+      "full_name": "Runner Changes",
+      "type": "array[object]",
+      "category": "Market Data Container",
+      "description": "Array of RunnerChange objects containing price/volume updates for individual selections. Only runners with changes are included in each update.",
+      "required": false,
+      "ml_relevance": "container",
+      "ml_notes": "Access child fields for order book data",
+      "contexts": ["mc[]"]
+    },
+
+    "marketDefinition": {
+      "full_name": "Market Definition",
+      "type": "object",
+      "category": "Market Data Container",
+      "description": "Complete market metadata including venue, status, runners, timing. Sent in full only when changed. Requires EX_MARKET_DEF filter flag in subscription.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Provides static context features (venue, market type, etc.) - join to streaming data",
+      "filter_flag": "EX_MARKET_DEF",
+      "contexts": ["mc[]"]
+    },
+
+    "ltp": {
+      "full_name": "Last Traded Price",
+      "type": "float",
+      "category": "Price - Core",
+      "description": "Most recent matched price on this selection. Key indicator of current market consensus. Only sent if changed.",
+      "required": false,
+      "ml_relevance": "critical",
+      "ml_notes": "Primary target variable and feature for price prediction models",
+      "filter_flag": "EX_LTP",
+      "contexts": ["rc[]"]
+    },
+
+    "batb": {
+      "full_name": "Best Available To Back",
+      "type": "array[array]",
+      "category": "Order Book - Back",
+      "description": "Best back prices excluding virtual bets. Array of [level, price, size] triples. Level 0 = best price. Size=0 indicates removal from that level.",
+      "structure": {
+        "format": "[[level, price, size], ...]",
+        "level": "Integer 0-9, where 0 is best (top of book)",
+        "price": "Decimal odds (1.01 to 1000)",
+        "size": "Available volume in GBP at this level"
+      },
+      "required": false,
+      "ml_relevance": "critical",
+      "ml_notes": "Essential for order book features - spread calculation, depth analysis, imbalance detection",
+      "filter_flag": "EX_BEST_OFFERS",
+      "contexts": ["rc[]"]
+    },
+
+    "batl": {
+      "full_name": "Best Available To Lay",
+      "type": "array[array]",
+      "category": "Order Book - Lay",
+      "description": "Best lay prices excluding virtual bets. Array of [level, price, size] triples. Mirrors batb structure for lay side.",
+      "structure": {
+        "format": "[[level, price, size], ...]",
+        "level": "Integer 0-9, where 0 is best (top of book)",
+        "price": "Decimal odds (1.01 to 1000)",
+        "size": "Available volume in GBP at this level"
+      },
+      "required": false,
+      "ml_relevance": "critical",
+      "ml_notes": "Essential for order book features - spread calculation, depth analysis, imbalance detection",
+      "filter_flag": "EX_BEST_OFFERS",
+      "contexts": ["rc[]"]
+    },
+
+    "bdatb": {
+      "full_name": "Best Display Available To Back",
+      "type": "array[array]",
+      "category": "Order Book - Back",
+      "description": "Best back prices INCLUDING virtual bets. Array of [level, price, size] triples. Same structure as batb but includes starting price bets.",
+      "structure": {
+        "format": "[[level, price, size], ...]"
+      },
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Alternative to batb when virtual bets are relevant",
+      "filter_flag": "EX_BEST_OFFERS_DISP",
+      "contexts": ["rc[]"]
+    },
+
+    "bdatl": {
+      "full_name": "Best Display Available To Lay",
+      "type": "array[array]",
+      "category": "Order Book - Lay",
+      "description": "Best lay prices INCLUDING virtual bets. Array of [level, price, size] triples. Same structure as batl but includes starting price bets.",
+      "structure": {
+        "format": "[[level, price, size], ...]"
+      },
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Alternative to batl when virtual bets are relevant",
+      "filter_flag": "EX_BEST_OFFERS_DISP",
+      "contexts": ["rc[]"]
+    },
+
+    "atb": {
+      "full_name": "Available To Back (Full Depth)",
+      "type": "array[array]",
+      "category": "Order Book - Back",
+      "description": "Full depth back ladder. Array of [price, size] tuples at every price with available volume.",
+      "structure": {
+        "format": "[[price, size], ...]",
+        "price": "Decimal odds",
+        "size": "Available volume in GBP"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Full order book depth - useful for support/resistance analysis",
+      "filter_flag": "EX_ALL_OFFERS",
+      "contexts": ["rc[]"]
+    },
+
+    "atl": {
+      "full_name": "Available To Lay (Full Depth)",
+      "type": "array[array]",
+      "category": "Order Book - Lay",
+      "description": "Full depth lay ladder. Array of [price, size] tuples at every price with available volume.",
+      "structure": {
+        "format": "[[price, size], ...]"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Full order book depth - useful for support/resistance analysis",
+      "filter_flag": "EX_ALL_OFFERS",
+      "contexts": ["rc[]"]
+    },
+
+    "trd": {
+      "full_name": "Traded Ladder",
+      "type": "array[array]",
+      "category": "Trade History",
+      "description": "Full traded history showing volume matched at each price point. Array of [price, size] tuples.",
+      "structure": {
+        "format": "[[price, size], ...]",
+        "price": "Decimal odds where trades occurred",
+        "size": "Total volume traded at this price"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Essential for VWAP calculation and volume-at-price analysis",
+      "filter_flag": "EX_TRADED",
+      "contexts": ["rc[]"]
+    },
+
+    "spn": {
+      "full_name": "Starting Price Near",
+      "type": "float",
+      "category": "Starting Price",
+      "description": "Betfair Starting Price near projection. Updated as market approaches start time. Lower bound of BSP estimate.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "BSP prediction target - near/far spread indicates confidence",
+      "filter_flag": "SP_PROJECTED",
+      "contexts": ["rc[]"]
+    },
+
+    "spf": {
+      "full_name": "Starting Price Far",
+      "type": "float",
+      "category": "Starting Price",
+      "description": "Betfair Starting Price far projection. Upper bound of BSP estimate. Narrows as race approaches.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "BSP prediction target - combined with spn provides confidence range",
+      "filter_flag": "SP_PROJECTED",
+      "contexts": ["rc[]"]
+    },
+
+    "spb": {
+      "full_name": "Starting Price Back",
+      "type": "array[array]",
+      "category": "Starting Price",
+      "description": "Starting price back ladder. Array of [price, size] tuples for SP back orders.",
+      "structure": {
+        "format": "[[price, size], ...]"
+      },
+      "required": false,
+      "ml_relevance": "medium",
+      "filter_flag": "SP_TRADED",
+      "contexts": ["rc[]"]
+    },
+
+    "spl": {
+      "full_name": "Starting Price Lay",
+      "type": "array[array]",
+      "category": "Starting Price",
+      "description": "Starting price lay ladder. Array of [price, size] tuples for SP lay orders.",
+      "structure": {
+        "format": "[[price, size], ...]"
+      },
+      "required": false,
+      "ml_relevance": "medium",
+      "filter_flag": "SP_TRADED",
+      "contexts": ["rc[]"]
+    },
+
+    "venue": {
+      "full_name": "Venue",
+      "type": "string",
+      "category": "Event Location",
+      "description": "Racing venue name (e.g., 'Cheltenham', 'Southwell', 'Kempton'). Horse racing and greyhound markets only.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Important categorical feature - patterns vary significantly by venue",
+      "contexts": ["marketDefinition"]
+    },
+
+    "marketType": {
+      "full_name": "Market Type",
+      "type": "string",
+      "category": "Market Type",
+      "description": "Market type code identifying the bet type",
+      "values": {
+        "WIN": "Win market - bet on the winner",
+        "PLACE": "Place market - bet on placed finishers",
+        "EACH_WAY": "Each way market",
+        "OTHER_PLACE": "Other place markets",
+        "WITHOUT_FAV": "Win without favourite"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Filter for WIN markets for initial model development",
+      "contexts": ["marketDefinition"]
+    },
+
+    "marketTime": {
+      "full_name": "Market Time",
+      "type": "string",
+      "category": "Event Timing",
+      "description": "Scheduled race start time in ISO 8601 format. Critical for calculating time-to-off feature.",
+      "format": "ISO 8601 (e.g., 2016-03-15T14:30:00.000Z)",
+      "required": false,
+      "ml_relevance": "critical",
+      "ml_notes": "Essential for time-to-off calculation: marketTime - pt",
+      "contexts": ["marketDefinition"]
+    },
+
+    "inPlay": {
+      "full_name": "In-Play Flag",
+      "type": "boolean",
+      "category": "Market State",
+      "description": "Boolean indicating if market is currently in-play (race in progress). Critical for strategy switching between pre-race and in-play models.",
+      "required": false,
+      "ml_relevance": "critical",
+      "ml_notes": "Segmentation feature - pre-race and in-play require different models",
+      "contexts": ["marketDefinition"]
+    },
+
+    "numberOfActiveRunners": {
+      "full_name": "Number of Active Runners",
+      "type": "integer",
+      "category": "Market Structure",
+      "description": "Count of selections currently available for betting. Changes when runners are withdrawn (non-runners).",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Field size affects market dynamics - important feature",
+      "contexts": ["marketDefinition"]
+    },
+
+    "numberOfWinners": {
+      "full_name": "Number of Winners",
+      "type": "integer",
+      "category": "Market Structure",
+      "description": "Number of winning places in this market (1 for WIN markets, 2-4 for place markets).",
+      "required": false,
+      "ml_relevance": "medium",
+      "contexts": ["marketDefinition"]
+    },
+
+    "eventId": {
+      "full_name": "Event ID",
+      "type": "string",
+      "category": "Event Identity",
+      "description": "Groups related markets (e.g., all markets for same race - WIN, PLACE, etc.). Essential for cross-market analysis.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Join key for cross-market features",
+      "contexts": ["marketDefinition"]
+    },
+
+    "eventTypeId": {
+      "full_name": "Event Type ID",
+      "type": "string",
+      "category": "Event Identity",
+      "description": "Sport/event type identifier. Used to filter for specific sports.",
+      "values": {
+        "7": "Horse Racing",
+        "1": "Football/Soccer",
+        "4339": "Greyhounds",
+        "2": "Tennis",
+        "4": "Cricket"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Filter for sport-specific analysis - 7 for horse racing",
+      "contexts": ["marketDefinition"]
+    },
+
+    "countryCode": {
+      "full_name": "Country Code",
+      "type": "string",
+      "category": "Event Identity",
+      "description": "ISO country code for the event location (e.g., 'GB', 'IE', 'AU').",
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Geographic segmentation feature",
+      "contexts": ["marketDefinition"]
+    },
+
+    "status": {
+      "full_name": "Market Status",
+      "type": "string",
+      "category": "Market State",
+      "description": "Current market status",
+      "values": {
+        "OPEN": "Market is open for betting",
+        "SUSPENDED": "Market temporarily suspended (no betting)",
+        "CLOSED": "Market is closed/settled"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Filter for OPEN status for training data",
+      "contexts": ["marketDefinition"]
+    },
+
+    "betDelay": {
+      "full_name": "Bet Delay",
+      "type": "integer",
+      "category": "Market State",
+      "description": "Seconds delay applied to in-play bets. Typically 0 pre-race, increases during in-play.",
+      "unit": "seconds",
+      "required": false,
+      "ml_relevance": "medium",
+      "contexts": ["marketDefinition"]
+    },
+
+    "bspMarket": {
+      "full_name": "BSP Market",
+      "type": "boolean",
+      "category": "Market Features",
+      "description": "Whether this market supports Betfair Starting Price.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "bspReconciled": {
+      "full_name": "BSP Reconciled",
+      "type": "boolean",
+      "category": "Market Features",
+      "description": "Whether BSP has been calculated and reconciled for this market.",
+      "required": false,
+      "ml_relevance": "medium",
+      "contexts": ["marketDefinition"]
+    },
+
+    "turnInPlayEnabled": {
+      "full_name": "Turn In-Play Enabled",
+      "type": "boolean",
+      "category": "Market Features",
+      "description": "Whether this market will turn in-play when the event starts.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "persistenceEnabled": {
+      "full_name": "Persistence Enabled",
+      "type": "boolean",
+      "category": "Market Features",
+      "description": "Whether orders can persist into in-play.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "discountAllowed": {
+      "full_name": "Discount Allowed",
+      "type": "boolean",
+      "category": "Market Features",
+      "description": "Whether commission discounts apply to this market.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "complete": {
+      "full_name": "Complete",
+      "type": "boolean",
+      "category": "Market State",
+      "description": "Whether the market is complete (all bets settled).",
+      "required": false,
+      "ml_relevance": "medium",
+      "contexts": ["marketDefinition"]
+    },
+
+    "crossMatching": {
+      "full_name": "Cross Matching",
+      "type": "boolean",
+      "category": "Market State",
+      "description": "Whether cross matching is enabled for this market.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "runnersVoidable": {
+      "full_name": "Runners Voidable",
+      "type": "boolean",
+      "category": "Market State",
+      "description": "Whether runner removal could void bets.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "marketBaseRate": {
+      "full_name": "Market Base Rate",
+      "type": "float",
+      "category": "Market Economics",
+      "description": "Base commission rate for this market (typically 5%). Required for profit calculations after commission.",
+      "unit": "percentage",
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Important for profit/loss calculations",
+      "contexts": ["marketDefinition"]
+    },
+
+    "eachWayDivisor": {
+      "full_name": "Each Way Divisor",
+      "type": "float",
+      "category": "Market Economics",
+      "description": "Fraction of win odds for place portion (e.g., 4.0 = 1/4 odds). Only for EACH_WAY markets.",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "openDate": {
+      "full_name": "Open Date",
+      "type": "string",
+      "category": "Event Timing",
+      "description": "Date/time when market opened for betting. ISO 8601 format.",
+      "format": "ISO 8601",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "settledTime": {
+      "full_name": "Settled Time",
+      "type": "string",
+      "category": "Event Timing",
+      "description": "Date/time when market was settled. ISO 8601 format. Only populated after settlement.",
+      "format": "ISO 8601",
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Useful for calculating total market duration",
+      "contexts": ["marketDefinition"]
+    },
+
+    "suspendTime": {
+      "full_name": "Suspend Time",
+      "type": "string",
+      "category": "Event Timing",
+      "description": "Date/time when market was suspended. ISO 8601 format.",
+      "format": "ISO 8601",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "timezone": {
+      "full_name": "Timezone",
+      "type": "string",
+      "category": "Event Location",
+      "description": "Timezone identifier for the event (e.g., 'Europe/London').",
+      "required": false,
+      "ml_relevance": "low",
+      "contexts": ["marketDefinition"]
+    },
+
+    "regulators": {
+      "full_name": "Regulators",
+      "type": "array[string]",
+      "category": "Market Structure",
+      "description": "List of regulatory bodies overseeing this market.",
+      "required": false,
+      "ml_relevance": "none",
+      "contexts": ["marketDefinition"]
+    },
+
+    "version": {
+      "full_name": "Version",
+      "type": "integer",
+      "category": "Market Versioning",
+      "description": "Non-monotonic version number. Higher = more recent. Used to identify latest version if duplicates received.",
+      "required": false,
+      "ml_relevance": "low",
+      "ml_notes": "Infrastructure field for data consistency",
+      "contexts": ["marketDefinition"]
+    },
+
+    "name": {
+      "full_name": "Market Name",
+      "type": "string",
+      "category": "Market Type",
+      "description": "Descriptive name of the market (e.g., '2m4f Grd1 Hrd', 'Each Way'). NOT the runner name.",
+      "required": false,
+      "ml_relevance": "low",
+      "ml_notes": "Display field - contains race distance/type info that could be parsed",
+      "common_errors": {
+        "misidentification": "Often confused with runner name - this is the MARKET name"
+      },
+      "contexts": ["marketDefinition"]
+    },
+
+    "runners": {
+      "full_name": "Runners",
+      "type": "array[object]",
+      "category": "Runner Identity",
+      "description": "Array of RunnerDefinition objects with metadata for each selection in the market.",
+      "required": false,
+      "ml_relevance": "container",
+      "contexts": ["marketDefinition"]
+    },
+
+    "runners[].id": {
+      "full_name": "Runner Selection ID",
+      "type": "integer",
+      "category": "Runner Identity",
+      "description": "Unique identifier for the runner/selection. Same as rc[].id. Join key between runner definition and price updates.",
+      "required": true,
+      "ml_relevance": "high",
+      "ml_notes": "Primary key for runner-level analysis"
+    },
+
+    "runners[].name": {
+      "full_name": "Runner Name",
+      "type": "string",
+      "category": "Runner Identity",
+      "description": "Name of the horse/selection (e.g., 'Thistlecrack', 'Cue Card').",
+      "required": false,
+      "ml_relevance": "low",
+      "ml_notes": "Display only - could be used for NLP features or name-based analysis"
+    },
+
+    "runners[].sortPriority": {
+      "full_name": "Sort Priority",
+      "type": "integer",
+      "category": "Runner Attributes",
+      "description": "Display order on Betfair website. Lower number = higher display position (typically by price/favoritism).",
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "Proxy for market favoritism ranking"
+    },
+
+    "runners[].status": {
+      "full_name": "Runner Status",
+      "type": "string",
+      "category": "Runner State",
+      "description": "Current status of the runner",
+      "values": {
+        "ACTIVE": "Runner available for betting",
+        "WINNER": "Runner declared winner",
+        "LOSER": "Runner declared loser",
+        "REMOVED": "Non-runner (withdrawn)",
+        "REMOVED_VACANT": "Removed vacant runner",
+        "HIDDEN": "Hidden from view",
+        "PLACED": "Runner placed (in place markets)"
+      },
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Filter for ACTIVE runners in training"
+    },
+
+    "runners[].adjustmentFactor": {
+      "full_name": "Adjustment Factor",
+      "type": "float",
+      "category": "Runner State",
+      "description": "Reduction factor applied if runner is removed (Rule 4 deductions). Higher = more fancied. Sum of all active runners' adjustmentFactors approaches 100.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Represents implied probability from Betfair - useful as feature or label"
+    },
+
+    "runners[].bsp": {
+      "full_name": "Betfair Starting Price",
+      "type": "float",
+      "category": "Starting Price",
+      "description": "Final calculated Betfair Starting Price. Only populated after BSP reconciliation.",
+      "required": false,
+      "ml_relevance": "high",
+      "ml_notes": "Ground truth for BSP prediction models"
+    },
+
+    "runners[].removalDate": {
+      "full_name": "Removal Date",
+      "type": "string",
+      "category": "Runner State",
+      "description": "Date/time when runner was removed (if applicable). ISO 8601 format.",
+      "format": "ISO 8601",
+      "required": false,
+      "ml_relevance": "medium",
+      "ml_notes": "For handling non-runners in historical analysis"
+    },
+
+    "runners[].hc": {
+      "full_name": "Handicap",
+      "type": "float",
+      "category": "Runner Attributes",
+      "description": "Handicap value for the runner. Null if not applicable (most horse racing markets).",
+      "required": false,
+      "ml_relevance": "low",
+      "ml_notes": "Mainly for Asian handicap markets"
+    },
+
+    "rc[].id": {
+      "full_name": "Selection ID (Runner Change)",
+      "type": "integer",
+      "category": "Runner Identity",
+      "description": "Unique numeric identifier for the runner/selection in price update context. Links to runners[].id.",
+      "required": true,
+      "ml_relevance": "high",
+      "ml_notes": "Join key for runner-level features"
+    }
+  }
+}
