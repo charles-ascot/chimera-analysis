@@ -52,13 +52,10 @@ app = FastAPI(
 )
 
 # CORS configuration
+_allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://analysis.thync.online",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=[o.strip() for o in _allowed_origins.split(",")] + ["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
